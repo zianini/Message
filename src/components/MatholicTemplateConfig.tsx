@@ -168,7 +168,7 @@ export default function MatholicTemplateConfig({
             onChange={(e) => handleTemplate1Change(e.target.value)}
             disabled={settings.templateMode === 'type2'}
             rows={3}
-            placeholder="{이름}학생의 {평가명} 점수는 {점수}점입니다."
+            placeholder="[쉐마수학]&#10;{이름}학생의 {평가명} 점수는 {점수}점입니다."
             className="w-full bg-slate-950/60 border border-slate-700/60 rounded-lg p-2.5 text-xs text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-sky-500 font-sans leading-relaxed"
           />
           <p className="text-[10px] text-slate-500 mt-1.5">
@@ -197,7 +197,7 @@ export default function MatholicTemplateConfig({
             onChange={(e) => handleTemplate2Change(e.target.value)}
             disabled={settings.templateMode === 'type1'}
             rows={3}
-            placeholder="{이름}학생의 {평가명} 점수는 {점수}점입니다."
+            placeholder="[쉐마수학]&#10;{이름}학생의 {평가명} 점수는 {점수}점입니다."
             className="w-full bg-slate-950/60 border border-slate-700/60 rounded-lg p-2.5 text-xs text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-sky-500 font-sans leading-relaxed"
           />
           <p className="text-[10px] text-slate-500 mt-1.5">

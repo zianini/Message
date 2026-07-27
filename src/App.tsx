@@ -64,15 +64,23 @@ export default function App() {
       headerPhoneName: '수신번호',
       headerContentName: '메세지내용',
       templateMode: 'auto',
-      template1: '{이름}학생의 {평가명} 점수는 {점수}점입니다.',
-      template2: '{이름}학생의 {평가명} 점수는 {점수}점입니다.',
+      template1: '[쉐마수학]\n{이름}학생의 {평가명} 점수는 {점수}점입니다.',
+      template2: '[쉐마수학]\n{이름}학생의 {평가명} 점수는 {점수}점입니다.',
       excludeOdaubYusa: true,
       excludeDates: true,
     };
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        return { ...defaultSettings, ...parsed };
+        let t1 = parsed.template1 || defaultSettings.template1;
+        let t2 = parsed.template2 || defaultSettings.template2;
+        if (t1 && !t1.includes('[쉐마수학]')) {
+          t1 = `[쉐마수학]\n${t1}`;
+        }
+        if (t2 && !t2.includes('[쉐마수학]')) {
+          t2 = `[쉐마수학]\n${t2}`;
+        }
+        return { ...defaultSettings, ...parsed, template1: t1, template2: t2 };
       } catch (e) {
         return defaultSettings;
       }
