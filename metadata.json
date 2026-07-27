@@ -1,0 +1,6 @@
+{
+  "name": "알리고 문자파일 변환기",
+  "description": "학생별 전화번호부와 메시지 파일을 매핑하여 알리고 규격의 SMS 대량 발송용 엑셀 파일로 정제 및 변환하는 전문 서비스입니다.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
