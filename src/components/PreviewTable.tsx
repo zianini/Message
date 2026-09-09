@@ -29,6 +29,30 @@ const COURSE_OPTIONS = [
   '공통수학1', '공통수학2', '대수', '미적분Ⅰ', '확률과 통계', '기하'
 ];
 
+// 대표 평가유형 (분류) 옵션
+const STANDARD_EVAL_TYPES = [
+  '자습테스트',
+  '주간평가',
+  '진단평가',
+  '1월 진단평가',
+  '2월 진단평가',
+  '3월 진단평가',
+  '4월 진단평가',
+  '5월 진단평가',
+  '6월 진단평가',
+  '7월 진단평가',
+  '8월 진단평가',
+  '9월 진단평가',
+  '10월 진단평가',
+  '11월 진단평가',
+  '12월 진단평가',
+  '미분류'
+];
+
+function escapeRegExp(string: string) {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 export default function PreviewTable({ 
   records, 
   onUpdateRecord, 
@@ -47,6 +71,10 @@ export default function PreviewTable({
   const [editPhone, setEditPhone] = useState('');
   const [editContent, setEditContent] = useState('');
   const [editCourseName, setEditCourseName] = useState('');
+  const [editEvalType, setEditEvalType] = useState('');
+  const [isCustomEvalType, setIsCustomEvalType] = useState(false);
+  const [editStatus, setEditStatus] = useState<ConvertedRecord['status']>('success');
+  const [statusModifiedByUser, setStatusModifiedByUser] = useState(false);
 
   // Batch course assignment
   const [selectedBatchCourse, setSelectedBatchCourse] = useState('');
@@ -71,10 +99,70 @@ export default function PreviewTable({
     setEditPhone(record.correctedPhone);
     setEditContent(record.correctedContent);
     setEditCourseName(record.courseName || '');
+
+    const currentEval = record.evalType || '미분류';
+    setEditEvalType(currentEval);
+    setIsCustomEvalType(!STANDARD_EVAL_TYPES.includes(currentEval) && currentEval !== '');
+    setEditStatus(record.status);
+    setStatusModifiedByUser(false);
   };
 
   const handleCancelEdit = () => {
     setEditingIndex(null);
+  };
+
+  // 과정명 변경 시 editContent 내 과정명 부분 자동 동기화
+  const handleCourseNameChange = (newCourse: string) => {
+    const oldCourse = editCourseName;
+    setEditCourseName(newCourse);
+
+    if (newCourse) {
+      let updated = editContent;
+      if (oldCourse && oldCourse !== '[과정명]' && updated.includes(oldCourse)) {
+        updated = updated.replace(new RegExp(escapeRegExp(oldCourse), 'g'), newCourse);
+      } else if (updated.includes('[과정명]')) {
+        updated = updated.replace(/\[과정명\]/g, newCourse);
+      } else {
+        const match = updated.match(/([0-9]{1,2}월\s*진단평가|주간평가|자습테스트|진단평가|미분류)\(([^)]*)\)/);
+        if (match) {
+          updated = updated.replace(
+            /([0-9]{1,2}월\s*진단평가|주간평가|자습테스트|진단평가|미분류)\(([^)]*)\)/g,
+            `$1(${newCourse})`
+          );
+        } else {
+          updated = updated.replace(
+            /([0-9]{1,2}월\s*진단평가|주간평가|자습테스트|진단평가|미분류)/g,
+            `$1(${newCourse})`
+          );
+        }
+      }
+      setEditContent(updated);
+    }
+  };
+
+  // 평가유형(분류) 변경 시 editContent 내 분류 부분 자동 동기화
+  const handleEvalTypeChange = (newEval: string, isCustom = false) => {
+    setIsCustomEvalType(isCustom);
+    const oldEval = editEvalType;
+    setEditEvalType(newEval);
+
+    if (newEval && newEval !== '미분류' && newEval !== '__custom__') {
+      let updated = editContent;
+      if (oldEval && oldEval !== '미분류' && updated.includes(oldEval)) {
+        updated = updated.replace(new RegExp(escapeRegExp(oldEval), 'g'), newEval);
+      } else {
+        updated = updated.replace(
+          /([0-9]{1,2}월\s*진단평가|주간평가|자습테스트|진단평가|미분류)/g,
+          newEval
+        );
+      }
+      setEditContent(updated);
+
+      // 기존 상태가 미분류였고 사용자가 상태를 수동 변경하지 않았다면 '형식 교정'으로 자동 전환
+      if (editStatus === 'unclassified' && !statusModifiedByUser) {
+        setEditStatus('corrected');
+      }
+    }
   };
 
   // 개별 과정명 즉시 대입
@@ -90,7 +178,7 @@ export default function PreviewTable({
       updatedContent = updatedContent.replace(/\[과정명\]/g, newCourse);
       // 만약 템플릿에 평가명 부분만 있었다면 추가 교체
       if (!updatedContent.includes(newCourse)) {
-        updatedContent = updatedContent.replace(/([0-9]{1,2}월\s*진단평가|주간평가|자습테스트)/g, `${newCourse} $1`);
+        updatedContent = updatedContent.replace(/([0-9]{1,2}월\s*진단평가|주간평가|자습테스트)/g, `$1(${newCourse})`);
       }
     }
 
@@ -130,7 +218,7 @@ export default function PreviewTable({
   const handleSaveEdit = (record: ConvertedRecord) => {
     const phoneEval = cleanAndFormatPhoneNumber(editPhone);
 
-    let status: ConvertedRecord['status'] = record.status;
+    let status: ConvertedRecord['status'] = statusModifiedByUser ? editStatus : record.status;
     let statusReason = record.statusReason;
 
     if (!editPhone.trim()) {
@@ -142,10 +230,20 @@ export default function PreviewTable({
     } else if (!editContent.trim()) {
       status = 'invalid';
       statusReason = '메시지 내용이 비어있습니다.';
+    } else if (statusModifiedByUser) {
+      status = editStatus;
+      statusReason = '사용자 직접 상태 변경';
     } else if (phoneEval.isCorrected) {
       status = 'corrected';
       statusReason = phoneEval.reason;
     } else if (status === 'invalid' || status === 'unclassified') {
+      status = 'corrected';
+      statusReason = '사용자 직접 수정 완료';
+    } else if (
+      editCourseName !== record.courseName ||
+      editEvalType !== record.evalType ||
+      editContent !== record.correctedContent
+    ) {
       status = 'corrected';
       statusReason = '사용자 직접 수정 완료';
     }
@@ -157,7 +255,7 @@ export default function PreviewTable({
       excludeKeywords.forEach((keyword) => {
         const trimmed = keyword.trim();
         if (trimmed) {
-          const escaped = trimmed.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const escaped = escapeRegExp(trimmed);
           const regex = new RegExp(escaped, 'gi');
           if (regex.test(finalContent)) {
             finalContent = finalContent.replace(regex, '');
@@ -178,13 +276,16 @@ export default function PreviewTable({
 
     const finalBytes = getByteLength(finalContent);
     const messageType = finalBytes > 90 ? 'LMS' : 'SMS';
+    const isUnclassified = !editEvalType.trim() || editEvalType === '미분류';
 
     onUpdateRecord({
       ...record,
       correctedPhone: phoneEval.isValid ? phoneEval.formatted : editPhone,
       correctedContent: finalContent,
       courseName: editCourseName || record.courseName,
+      evalType: editEvalType.trim() || '미분류',
       isCourseNameMissing: !editCourseName.trim(),
+      isUnclassified,
       bytes: finalBytes,
       messageType,
       status,
@@ -202,7 +303,8 @@ export default function PreviewTable({
         r.idOrName.toLowerCase().includes(searchTerm.toLowerCase()) ||
         r.correctedPhone.includes(searchTerm) ||
         r.correctedContent.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (r.courseName && r.courseName.toLowerCase().includes(searchTerm.toLowerCase()));
+        (r.courseName && r.courseName.toLowerCase().includes(searchTerm.toLowerCase())) ||
+        (r.evalType && r.evalType.toLowerCase().includes(searchTerm.toLowerCase()));
 
       if (!matchesSearch) return false;
 
@@ -370,9 +472,9 @@ export default function PreviewTable({
             <tr className="bg-slate-900/40 border-b border-slate-700/60 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
               <th className="py-3.5 px-4 w-12 text-center">No</th>
               <th className="py-3.5 px-4 w-36">수신번호 (A열)</th>
-              <th className="py-3.5 px-4 w-36">과정명/분류</th>
+              <th className="py-3.5 px-4 w-48">과정명/분류</th>
               <th className="py-3.5 px-4">메시지 내용 (B열)</th>
-              <th className="py-3.5 px-4 w-28 text-center">상태</th>
+              <th className="py-3.5 px-4 w-32 text-center">상태</th>
               <th className="py-3.5 px-4 w-24 text-center">관리</th>
             </tr>
           </thead>
@@ -444,19 +546,61 @@ export default function PreviewTable({
                       )}
                     </td>
 
-                    {/* 과정명 & 평가유형 */}
+                    {/* 과정명 & 평가유형(분류) */}
                     <td className="py-3.5 px-4">
                       {isEditing ? (
-                        <select
-                          value={editCourseName}
-                          onChange={(e) => setEditCourseName(e.target.value)}
-                          className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs focus:outline-none focus:border-sky-500 text-slate-100"
-                        >
-                          <option value="">-- 과정명 선택 --</option>
-                          {COURSE_OPTIONS.map(c => (
-                            <option key={c} value={c}>{c}</option>
-                          ))}
-                        </select>
+                        <div className="flex flex-col gap-2 min-w-[150px]">
+                          <div>
+                            <span className="block text-[10px] text-slate-400 font-medium mb-0.5">과정명</span>
+                            <select
+                              value={editCourseName}
+                              onChange={(e) => handleCourseNameChange(e.target.value)}
+                              className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs focus:outline-none focus:border-sky-500 text-slate-100"
+                            >
+                              <option value="">-- 과정명 선택 --</option>
+                              {COURSE_OPTIONS.map(c => (
+                                <option key={c} value={c}>{c}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <div>
+                            <span className="block text-[10px] text-slate-400 font-medium mb-0.5">분류 (평가유형)</span>
+                            <select
+                              value={isCustomEvalType ? '__custom__' : editEvalType}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                if (val === '__custom__') {
+                                  setIsCustomEvalType(true);
+                                } else {
+                                  setIsCustomEvalType(false);
+                                  handleEvalTypeChange(val, false);
+                                }
+                              }}
+                              className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs focus:outline-none focus:border-sky-500 text-slate-100"
+                            >
+                              <option value="자습테스트">자습테스트</option>
+                              <option value="주간평가">주간평가</option>
+                              <option value="진단평가">진단평가</option>
+                              <optgroup label="월별 진단평가">
+                                {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(m => (
+                                  <option key={m} value={`${m}월 진단평가`}>{m}월 진단평가</option>
+                                ))}
+                              </optgroup>
+                              <option value="미분류">미분류</option>
+                              <option value="__custom__">직접 입력...</option>
+                            </select>
+                            {isCustomEvalType && (
+                              <input
+                                type="text"
+                                value={editEvalType === '__custom__' ? '' : editEvalType}
+                                onChange={(e) => handleEvalTypeChange(e.target.value, true)}
+                                placeholder="분류명 직접 입력"
+                                className="w-full mt-1.5 bg-slate-950 border border-sky-500/50 rounded px-2 py-1 text-xs focus:outline-none focus:border-sky-500 text-slate-100 placeholder-slate-500"
+                                autoFocus
+                              />
+                            )}
+                          </div>
+                        </div>
                       ) : (
                         <div className="flex flex-col items-start gap-1">
                           {r.courseName && r.courseName !== '[과정명]' ? (
@@ -481,7 +625,7 @@ export default function PreviewTable({
                               </select>
                             </div>
                           )}
-                          <span className="text-[10px] text-slate-400">
+                          <span className={`text-[10px] ${r.evalType && r.evalType !== '미분류' ? 'text-slate-400' : 'text-orange-400 font-medium'}`}>
                             {r.evalType || '미분류'}
                           </span>
                         </div>
@@ -494,8 +638,8 @@ export default function PreviewTable({
                         <textarea
                           value={editContent}
                           onChange={(e) => setEditContent(e.target.value)}
-                          rows={2}
-                          className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs focus:outline-none focus:border-sky-500 text-slate-100"
+                          rows={3}
+                          className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs focus:outline-none focus:border-sky-500 text-slate-100 resize-y"
                         />
                       ) : (
                         <div className="group relative">
@@ -508,22 +652,43 @@ export default function PreviewTable({
 
                     {/* Status Badge & Reasons */}
                     <td className="py-3.5 px-4 text-center">
-                      <div className="flex flex-col items-center gap-1">
-                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${statusBadge}`}>
-                          {r.status === 'success' && '정상 수신'}
-                          {r.status === 'corrected' && '형식 교정'}
-                          {r.status === 'unclassified' && '미분류 예외'}
-                          {r.status === 'filtered_duplicate' && '중복 제외'}
-                          {r.status === 'filtered_keyword' && '날짜 제외'}
-                          {r.status === 'filtered_odaub_yusa' && '오답유사 제외'}
-                          {r.status === 'invalid' && '오류 보류'}
-                        </span>
-                        {r.statusReason && (
-                          <span className="text-[9px] text-slate-500 max-w-[140px] truncate block" title={r.statusReason}>
-                            {r.statusReason}
+                      {isEditing ? (
+                        <div className="flex flex-col items-center gap-1 min-w-[96px]">
+                          <select
+                            value={editStatus}
+                            onChange={(e) => {
+                              setEditStatus(e.target.value as ConvertedRecord['status']);
+                              setStatusModifiedByUser(true);
+                            }}
+                            className="w-full bg-slate-950 border border-slate-700 rounded px-1.5 py-1 text-[11px] focus:outline-none focus:border-sky-500 text-slate-100 text-center"
+                          >
+                            <option value="success">정상 수신</option>
+                            <option value="corrected">형식 교정</option>
+                            <option value="unclassified">미분류 예외</option>
+                            <option value="invalid">오류 보류</option>
+                            <option value="filtered_duplicate">중복 제외</option>
+                            <option value="filtered_keyword">날짜 제외</option>
+                            <option value="filtered_odaub_yusa">오답유사 제외</option>
+                          </select>
+                        </div>
+                      ) : (
+                        <div className="flex flex-col items-center gap-1">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${statusBadge}`}>
+                            {r.status === 'success' && '정상 수신'}
+                            {r.status === 'corrected' && '형식 교정'}
+                            {r.status === 'unclassified' && '미분류 예외'}
+                            {r.status === 'filtered_duplicate' && '중복 제외'}
+                            {r.status === 'filtered_keyword' && '날짜 제외'}
+                            {r.status === 'filtered_odaub_yusa' && '오답유사 제외'}
+                            {r.status === 'invalid' && '오류 보류'}
                           </span>
-                        )}
-                      </div>
+                          {r.statusReason && (
+                            <span className="text-[9px] text-slate-500 max-w-[140px] truncate block" title={r.statusReason}>
+                              {r.statusReason}
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </td>
 
                     {/* Row Controls */}

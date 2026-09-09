@@ -254,12 +254,12 @@ export default function App() {
     // 2. Mock Messages/Schedule data as Matholic Learning History style
     const mockMessages = [
       // Case 1: Multiple records for std001 - Higher score (98) from '학습명' column should be kept, lower (95, 80) filtered
-      { 아이디: 'std001', 학생이름: '강서준', 평가명: '5월 진단평가 5-1', 학습유형: '진단평가', 점수: '95', 완료일: '2026-07-17', 내용: '[쉐마수학]\n강서준 학생의 5월 진단평가 5-1 점수는 95점입니다.' }, // Friday (2026-07-17), has "진단평가" -> "진단평가"
-      { 아이디: 'std001', 학생이름: '강서준', 평가명: '5-1 자습테스트', 학습유형: '자습테스트', 점수: '80', 완료일: '2026-07-16', 내용: '[쉐마수학]\n강서준 학생의 5-1 자습테스트 점수는 80점입니다.' },
+      { 아이디: 'std001', 학생이름: '강서준', 평가명: '7월 진단평가(5-1)', 학습유형: '진단평가', 점수: '95', 완료일: '2026-07-17', 내용: '[쉐마수학]\n강서준 학생의 7월 진단평가(5-1) 점수는 95점입니다.' }, // Friday (2026-07-17), has "진단평가" -> "진단평가"
+      { 아이디: 'std001', 학생이름: '강서준', 평가명: '자습테스트(5-1)', 학습유형: '자습테스트', 점수: '80', 완료일: '2026-07-16', 내용: '[쉐마수학]\n강서준 학생의 자습테스트(5-1) 점수는 80점입니다.' },
       { 아이디: 'std001', 학생이름: '강서준', 학습명: '5-1 심화 복습과정', 학습유형: '자습테스트', 점수: '98', 완료일: '2026-07-17', 내용: '[쉐마수학]\n강서준 학생의 5-1 심화 복습과정 점수는 98점입니다.' }, // Friday (2026-07-17), no "진단평가" in name -> "주간평가" as fallback
       
       // Case 2: Assessment template match (type 1)
-      { 아이디: 'std002', 학생이름: '이서연', 평가명: '5월 주간평가 6-1', 학습유형: '주간평가', 점수: '90', 완료일: '2026-07-17', 내용: '[쉐마수학]\n이서연 학생의 5월 주간평가 6-1 점수는 90점입니다.' },
+      { 아이디: 'std002', 학생이름: '이서연', 평가명: '7월 주간평가(6-1)', 학습유형: '주간평가', 점수: '90', 완료일: '2026-07-17', 내용: '[쉐마수학]\n이서연 학생의 7월 주간평가(6-1) 점수는 90점입니다.' },
       
       // Case 3: Standard template match (type 2)
       { 아이디: 'std003', 학생이름: '박우진', 평가명: '6-1 자습테스트', 학습유형: '자습테스트', 점수: '85', 완료일: '2026-07-16', 내용: '[쉐마수학]\n박우진 학생의 6-1 자습테스트 점수는 85점입니다.' },
@@ -469,7 +469,7 @@ export default function App() {
             </div>
             <div>
               <h1 className="text-base font-extrabold tracking-tight text-white flex items-center gap-2">
-                알리고 문자파일 변환기
+                <span className="notranslate" translate="no">알리고</span> 문자파일 변환기
                 <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-sky-500/10 text-sky-400 border border-sky-500/20">
                   v1.2 PRO
                 </span>
@@ -524,7 +524,7 @@ export default function App() {
             </button>
             <h3 className="text-base font-bold text-white flex items-center gap-2">
               <Sparkles className="w-5 h-5 text-sky-400" />
-              알리고 대량 발송용 엑셀 변환 규칙 가이드
+              <span className="notranslate" translate="no">알리고</span> 대량 발송용 엑셀 변환 규칙 가이드
             </h3>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-4 text-xs">
               <div className="space-y-1 bg-slate-900/60 p-4 rounded-xl border border-slate-800">
@@ -540,7 +540,7 @@ export default function App() {
                 </p>
               </div>
               <div className="space-y-1 bg-slate-900/60 p-4 rounded-xl border border-slate-800">
-                <h4 className="font-bold text-sky-400">3. 알리고 엑셀 규격과 다운로드</h4>
+                <h4 className="font-bold text-sky-400">3. <span className="notranslate" translate="no">알리고</span> 엑셀 규격과 다운로드</h4>
                 <p className="text-slate-300 leading-relaxed">
                   변환 결과가 완료되면 A열은 정제된 수신번호, B열은 메시지 본문으로 생성되며 하단 미리보기에서 자유롭게 편집 및 불필요 행을 지운 뒤 최종 엑셀 다운로드를 받으실 수 있습니다.
                 </p>
@@ -902,10 +902,10 @@ export default function App() {
       {/* Footer design with zero AI telemetry details */}
       <footer className="mt-auto bg-[#0B0F19] border-t border-slate-800/80 py-6 px-6 text-center text-xs text-slate-500">
         <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
-          <span>&copy; {new Date().getFullYear()} 알리고 문자파일 변환기. All rights reserved.</span>
+          <span>&copy; {new Date().getFullYear()} <span className="notranslate" translate="no">알리고</span> 문자파일 변환기. All rights reserved.</span>
           <div className="flex gap-4">
             <span className="text-slate-700">|</span>
-            <span className="text-slate-400">본 도구는 알리고(Aligo) 엑셀 일괄 업로드 규격을 완벽 지원합니다.</span>
+            <span className="text-slate-400">본 도구는 <span className="notranslate" translate="no">알리고(Aligo)</span> 엑셀 일괄 업로드 규격을 완벽 지원합니다.</span>
           </div>
         </div>
       </footer>

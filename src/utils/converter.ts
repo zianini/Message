@@ -361,9 +361,9 @@ export function generateMessageContentDetail(
   let formattedExam = examName;
   if (!forceOriginalExam) {
     if (courseName && rawEvalType) {
-      formattedExam = `${courseName} ${evalType}`;
+      formattedExam = `${evalType}(${courseName})`;
     } else if (courseName) {
-      formattedExam = `${courseName} ${evalType}`;
+      formattedExam = `${evalType}(${courseName})`;
     } else if (rawEvalType) {
       formattedExam = evalType;
     } else {

@@ -32,7 +32,7 @@ export default function Dashboard({ stats, onExport, disabledExport }: Dashboard
               변환 대시보드
             </span>
             <h2 className="text-2xl font-bold mt-2 text-white font-sans tracking-tight">
-              알리고 전송 대기 분석 리포트
+              <span className="notranslate" translate="no">알리고</span> 전송 대기 분석 리포트
             </h2>
             <p className="text-sm text-slate-400 mt-1">
               전체 업로드된 데이터 중 발송 가능한 수신자 수와 가용 SMS/LMS 비용 가이드를 확인하세요.
@@ -50,7 +50,7 @@ export default function Dashboard({ stats, onExport, disabledExport }: Dashboard
               }`}
             >
               <FileDown className="w-5 h-5" />
-              알리고 양식 엑셀 다운로드
+              <span className="notranslate" translate="no">알리고</span> 양식 엑셀 다운로드
             </button>
           </div>
         </div>
@@ -145,7 +145,7 @@ export default function Dashboard({ stats, onExport, disabledExport }: Dashboard
             <h3 className="text-2xl font-bold text-sky-400 mt-1 font-mono">
               {stats.smsCount.toLocaleString()} <span className="text-sm font-medium text-sky-400">건</span>
             </h3>
-            <p className="text-xs text-slate-500 mt-2">알리고 1건 차감 기준</p>
+            <p className="text-xs text-slate-500 mt-2"><span className="notranslate" translate="no">알리고</span> 1건 차감 기준</p>
           </div>
           <div className="p-3 rounded-xl bg-sky-500/10 text-sky-400 border border-sky-500/20">
             <Smartphone className="w-5 h-5" />
@@ -159,7 +159,7 @@ export default function Dashboard({ stats, onExport, disabledExport }: Dashboard
             <h3 className="text-2xl font-bold text-violet-400 mt-1 font-mono">
               {stats.lmsCount.toLocaleString()} <span className="text-sm font-medium text-violet-400">건</span>
             </h3>
-            <p className="text-xs text-slate-500 mt-2">장문 알리고 3건 차감 기준</p>
+            <p className="text-xs text-slate-500 mt-2">장문 <span className="notranslate" translate="no">알리고</span> 3건 차감 기준</p>
           </div>
           <div className="p-3 rounded-xl bg-violet-500/10 text-violet-400 border border-violet-500/20">
             <MessageSquare className="w-5 h-5" />
