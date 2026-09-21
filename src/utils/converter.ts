@@ -111,8 +111,8 @@ export function getValueByKeywords(row: Record<string, any> | undefined, keyword
   for (const key of Object.keys(row)) {
     const cleanKey = key.trim().toLowerCase();
     
-    // 시험지명/학습명 등을 찾을 때 '학습일', '학습유형' 등의 날짜/타입 컬럼이 잘못 매칭되는 것을 방지
-    const isSearchingForExam = keywords.includes('시험지명') || keywords.includes('시험명') || keywords.includes('학습명');
+    // 시험지명/학습명/제목 등을 찾을 때 '학습일', '학습유형' 등의 날짜/타입 컬럼이 잘못 매칭되는 것을 방지
+    const isSearchingForExam = keywords.includes('시험지명') || keywords.includes('시험명') || keywords.includes('학습명') || keywords.includes('제목');
     if (isSearchingForExam) {
       if (cleanKey.includes('일') || cleanKey.includes('date') || cleanKey.includes('유형') || cleanKey.includes('구분') || cleanKey.includes('type')) {
         continue;
@@ -278,20 +278,27 @@ export function determineEvaluationType(
   const cleanType = (learningType || '').trim().toLowerCase();
   const cleanExam = (examName || '').trim().toLowerCase();
 
-  // 1. 자습테스트: 학습유형이 "학습지" 포함 + 학습명에 "자습테스트", "자습", "lv" 포함
+  // 1. 최우선 규칙: 학습유형이 "진단평가"이더라도 제목(학습명)에 "자습"이 있으면 "자습테스트"로 분류
+  //    (제목/시험지명에 "자습" 또는 "자습테스트"가 포함되어 있으면 최우선으로 "자습테스트")
+  if (cleanExam.includes('자습') || cleanExam.includes('자습테스트')) {
+    return '자습테스트';
+  }
+
+  // 2. 자습테스트: 학습유형이 "학습지" 포함 + 학습명에 "lv" 포함
   if (cleanType.includes('학습지')) {
-    if (cleanExam.includes('자습테스트') || cleanExam.includes('자습') || cleanExam.includes('lv')) {
+    if (cleanExam.includes('lv')) {
       return '자습테스트';
     }
   }
 
-  // 2. 주간평가: 학습유형이 "진단평가" 포함 + 학습명에 "주간평가", "주간 평가" 포함
+  // 3. 학습유형이 "진단평가" 포함
   if (cleanType.includes('진단평가')) {
+    // 3-1. 주간평가: 학습명에 "주간평가", "주간 평가" 포함
     if (cleanExam.includes('주간평가') || cleanExam.includes('주간 평가')) {
       return '주간평가';
     }
 
-    // 3. 진단평가: 학습유형이 "진단평가" 포함 + 학습명에 "진단평가", "진단 평가" 포함
+    // 3-2. 진단평가: 학습명에 "진단평가", "진단 평가" 포함
     if (cleanExam.includes('진단평가') || cleanExam.includes('진단 평가')) {
       const dateStr = getValueByKeywords(row, ['완료일', '학습일', '날짜', 'date', '일자', '완료일자']);
       const month = getMonthFromDate(dateStr);
@@ -299,7 +306,17 @@ export function determineEvaluationType(
     }
   }
 
-  // 4. 그 밖에 예외 사항: 위 조건을 만족하지 못하는 경우 미분류('')
+  // 4. 학습유형 컬럼이 비어있거나 매칭되지 않더라도 학습명에 주간평가/진단평가가 명확히 명시된 경우
+  if (cleanExam.includes('주간평가') || cleanExam.includes('주간 평가')) {
+    return '주간평가';
+  }
+  if (cleanExam.includes('진단평가') || cleanExam.includes('진단 평가')) {
+    const dateStr = getValueByKeywords(row, ['완료일', '학습일', '날짜', 'date', '일자', '완료일자']);
+    const month = getMonthFromDate(dateStr);
+    return `${month}월 진단평가`;
+  }
+
+  // 5. 그 밖에 예외 사항: 위 조건을 만족하지 못하는 경우 미분류('')
   return '';
 }
 
@@ -328,7 +345,7 @@ export function generateMessageContentDetail(
   }
 
   const name = getValueByKeywords(row, ['학생명', '학생이름', '이름', 'name']);
-  const exam = getValueByKeywords(row, ['시험지명', '시험명', '평가명', '평가이름', '시험지', '평가', '학습명', '학습']);
+  const exam = getValueByKeywords(row, ['시험지명', '시험명', '평가명', '평가이름', '시험지', '평가', '학습명', '학습', '제목', '학습제목', 'title']);
   const scoreStr = getValueByKeywords(row, ['점수', '득점', '성적', 'score']);
   const learningType = getValueByKeywords(row, ['학습유형', '유형', '구분', 'type']);
   
