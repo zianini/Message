@@ -11,9 +11,12 @@ import {
   Eye,
   BookOpen,
   AlertTriangle,
-  HelpCircle
+  HelpCircle,
+  Sparkles,
+  Info
 } from 'lucide-react';
-import { getByteLength, cleanAndFormatPhoneNumber } from '../utils/converter';
+import { getByteLength, cleanAndFormatPhoneNumber, isOdaubYusaRecord, getValueByKeywords } from '../utils/converter';
+import CourseProcessModal from './CourseProcessModal';
 
 interface PreviewTableProps {
   records: ConvertedRecord[];
@@ -24,13 +27,15 @@ interface PreviewTableProps {
 
 // 대표 수학 과정명 옵션
 const COURSE_OPTIONS = [
+  '3-1', '3-2', '4-1', '4-2',
   '5-1', '5-2', '6-1', '6-2', 
-  '1-1', '1-2', '2-1', '2-2', '3-1', '3-2',
-  '공통수학1', '공통수학2', '대수', '미적분Ⅰ', '확률과 통계', '기하'
+  '1-1', '1-2', '2-1', '2-2', 
+  '수학(상)', '수학(하)', '공통수학1', '공통수학2', '대수', '미적분Ⅰ', '확률과 통계', '기하'
 ];
 
 // 대표 평가유형 (분류) 옵션
 const STANDARD_EVAL_TYPES = [
+  '오답유사',
   '자습테스트',
   '주간평가',
   '진단평가',
@@ -60,7 +65,7 @@ export default function PreviewTable({
   excludeKeywords
 }: PreviewTableProps) {
   const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'valid' | 'unclassified' | 'filtered' | 'invalid'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'valid' | 'odaub_yusa' | 'unclassified' | 'filtered' | 'invalid'>('all');
   
   // Pagination
   const [currentPage, setCurrentPage] = useState(1);
@@ -78,20 +83,43 @@ export default function PreviewTable({
 
   // Batch course assignment
   const [selectedBatchCourse, setSelectedBatchCourse] = useState('');
+  
+  // Course Process Guide modal state
+  const [showCourseProcessModal, setShowCourseProcessModal] = useState(false);
 
   // Reset page when filter or search changes
   React.useEffect(() => {
     setCurrentPage(1);
   }, [searchTerm, statusFilter, rowsPerPage]);
 
-  // 과정명이 추출되지 않은 건 수
-  const missingCourseCount = useMemo(() => {
-    return records.filter(r => r.isCourseNameMissing || r.courseName === '[과정명]' || !r.courseName).length;
+  // 오답유사 건 수
+  const odaubYusaCount = useMemo(() => {
+    return records.filter(r => isOdaubYusaRecord(r)).length;
   }, [records]);
 
-  // 미분류 예외 건 수
+  // 과정명이 추출되지 않은 건 수 (오답유사는 평가명 단독이므로 제외)
+  const missingCourseCount = useMemo(() => {
+    return records.filter(r => !isOdaubYusaRecord(r) && (r.isCourseNameMissing || r.courseName === '[과정명]' || !r.courseName)).length;
+  }, [records]);
+
+  // 미분류 예외 건 수 (오답유사는 제외)
   const unclassifiedCount = useMemo(() => {
-    return records.filter(r => r.status === 'unclassified' || r.isUnclassified).length;
+    return records.filter(r => !isOdaubYusaRecord(r) && (r.status === 'unclassified' || r.isUnclassified)).length;
+  }, [records]);
+
+  // 제외 건 수 (중복 제외 + 날짜/키워드 제외, 오답유사는 별도 탭)
+  const filteredCount = useMemo(() => {
+    return records.filter(r => !isOdaubYusaRecord(r) && (r.status === 'filtered_duplicate' || r.status === 'filtered_keyword')).length;
+  }, [records]);
+
+  // 오류 건 수
+  const invalidCount = useMemo(() => {
+    return records.filter(r => r.status === 'invalid').length;
+  }, [records]);
+
+  // 발송가능 건 수
+  const validCount = useMemo(() => {
+    return records.filter(r => r.status === 'success' || r.status === 'corrected').length;
   }, [records]);
 
   const handleStartEdit = (record: ConvertedRecord) => {
@@ -148,7 +176,13 @@ export default function PreviewTable({
 
     if (newEval && newEval !== '미분류' && newEval !== '__custom__') {
       let updated = editContent;
-      if (oldEval && oldEval !== '미분류' && updated.includes(oldEval)) {
+      if (newEval === '오답유사') {
+        const currentRecord = records.find(r => r.index === editingIndex);
+        const rawExam = currentRecord ? getValueByKeywords(currentRecord.rawRow, ['시험지명', '시험명', '평가명', '평가이름', '시험지', '평가', '학습명', '학습', '제목', '학습제목', 'title']) : '';
+        if (rawExam) {
+          updated = rawExam;
+        }
+      } else if (oldEval && oldEval !== '미분류' && updated.includes(oldEval)) {
         updated = updated.replace(new RegExp(escapeRegExp(oldEval), 'g'), newEval);
       } else {
         updated = updated.replace(
@@ -188,6 +222,7 @@ export default function PreviewTable({
     onUpdateRecord({
       ...record,
       courseName: newCourse,
+      courseSource: '사용자 직접 지정',
       isCourseNameMissing: false,
       correctedContent: updatedContent,
       bytes: finalBytes,
@@ -283,6 +318,7 @@ export default function PreviewTable({
       correctedPhone: phoneEval.isValid ? phoneEval.formatted : editPhone,
       correctedContent: finalContent,
       courseName: editCourseName || record.courseName,
+      courseSource: editCourseName !== record.courseName ? '사용자 직접 수정' : record.courseSource,
       evalType: editEvalType.trim() || '미분류',
       isCourseNameMissing: !editCourseName.trim(),
       isUnclassified,
@@ -313,11 +349,14 @@ export default function PreviewTable({
       if (statusFilter === 'valid') {
         return r.status === 'success' || r.status === 'corrected';
       }
+      if (statusFilter === 'odaub_yusa') {
+        return isOdaubYusaRecord(r);
+      }
       if (statusFilter === 'unclassified') {
-        return r.status === 'unclassified' || r.isUnclassified;
+        return !isOdaubYusaRecord(r) && (r.status === 'unclassified' || r.isUnclassified);
       }
       if (statusFilter === 'filtered') {
-        return r.status === 'filtered_duplicate' || r.status === 'filtered_keyword' || r.status === 'filtered_odaub_yusa';
+        return !isOdaubYusaRecord(r) && (r.status === 'filtered_duplicate' || r.status === 'filtered_keyword');
       }
       if (statusFilter === 'invalid') {
         return r.status === 'invalid';
@@ -383,15 +422,17 @@ export default function PreviewTable({
               <p className="text-xs text-slate-400 mt-0.5">스마트 자동 분류된 수신번호, 과정명 및 메시지 내용을 실시간 조회 및 직접 수정합니다.</p>
             </div>
           </div>
-          <span className="text-xs text-slate-400 font-medium">
-            검색 결과: <strong className="text-sky-400 font-mono">{filteredRecords.length}</strong> / {records.length}건
-          </span>
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-slate-400 font-medium bg-slate-900/60 px-3 py-1.5 rounded-lg border border-slate-700/40">
+              검색 결과: <strong className="text-sky-400 font-mono">{filteredRecords.length}</strong> / {records.length}건
+            </span>
+          </div>
         </div>
 
         {/* Filters and search inputs */}
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-3 mt-5">
+        <div className="grid grid-cols-1 xl:grid-cols-12 gap-3 mt-5 items-center">
           {/* Search bar */}
-          <div className="md:col-span-2 relative">
+          <div className="xl:col-span-4 relative">
             <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-slate-500">
               <Search className="w-4 h-4" />
             </span>
@@ -404,11 +445,11 @@ export default function PreviewTable({
             />
           </div>
 
-          {/* Status filter selection tabs/dropdown */}
-          <div className="md:col-span-2 flex bg-slate-900/60 rounded-lg p-1 text-xs font-semibold text-slate-400 border border-slate-700/40">
+          {/* Status filter selection tabs */}
+          <div className="xl:col-span-6 flex bg-slate-900/60 rounded-lg p-1 text-xs font-semibold text-slate-400 border border-slate-700/40 overflow-x-auto gap-1">
             <button
               onClick={() => setStatusFilter('all')}
-              className={`flex-1 py-1 rounded-md text-center transition-all cursor-pointer ${
+              className={`flex-1 min-w-[50px] py-1.5 px-2 rounded-md text-center transition-all cursor-pointer whitespace-nowrap ${
                 statusFilter === 'all' ? 'bg-slate-800 text-white shadow-md' : 'hover:text-slate-200'
               }`}
             >
@@ -416,40 +457,56 @@ export default function PreviewTable({
             </button>
             <button
               onClick={() => setStatusFilter('valid')}
-              className={`flex-1 py-1 rounded-md text-center transition-all cursor-pointer ${
+              className={`flex-1 min-w-[64px] py-1.5 px-2 rounded-md text-center transition-all cursor-pointer whitespace-nowrap ${
                 statusFilter === 'valid' ? 'bg-emerald-600/90 text-white shadow-md' : 'hover:text-slate-200'
               }`}
             >
-              발송가능
+              발송가능 ({validCount})
+            </button>
+            <button
+              onClick={() => setStatusFilter('odaub_yusa')}
+              className={`flex-1 min-w-[76px] py-1.5 px-2 rounded-md text-center transition-all cursor-pointer whitespace-nowrap relative ${
+                statusFilter === 'odaub_yusa' 
+                  ? 'bg-pink-600/90 text-white shadow-md' 
+                  : odaubYusaCount > 0 
+                    ? 'text-pink-300 hover:text-pink-200 hover:bg-pink-950/20' 
+                    : 'hover:text-slate-200'
+              }`}
+            >
+              오답유사 ({odaubYusaCount})
             </button>
             <button
               onClick={() => setStatusFilter('unclassified')}
-              className={`flex-1 py-1 rounded-md text-center transition-all cursor-pointer relative ${
-                statusFilter === 'unclassified' ? 'bg-orange-600/90 text-white shadow-md' : 'hover:text-slate-200'
+              className={`flex-1 min-w-[68px] py-1.5 px-2 rounded-md text-center transition-all cursor-pointer whitespace-nowrap relative ${
+                statusFilter === 'unclassified' 
+                  ? 'bg-orange-600/90 text-white shadow-md' 
+                  : unclassifiedCount > 0 
+                    ? 'text-orange-300 hover:text-orange-200 hover:bg-orange-950/20' 
+                    : 'hover:text-slate-200'
               }`}
             >
               미분류 ({unclassifiedCount})
             </button>
             <button
               onClick={() => setStatusFilter('filtered')}
-              className={`flex-1 py-1 rounded-md text-center transition-all cursor-pointer ${
+              className={`flex-1 min-w-[56px] py-1.5 px-2 rounded-md text-center transition-all cursor-pointer whitespace-nowrap ${
                 statusFilter === 'filtered' ? 'bg-amber-600/90 text-white shadow-md' : 'hover:text-slate-200'
               }`}
             >
-              제외됨
+              제외됨 ({filteredCount})
             </button>
             <button
               onClick={() => setStatusFilter('invalid')}
-              className={`flex-1 py-1 rounded-md text-center transition-all cursor-pointer ${
+              className={`flex-1 min-w-[50px] py-1.5 px-2 rounded-md text-center transition-all cursor-pointer whitespace-nowrap ${
                 statusFilter === 'invalid' ? 'bg-rose-600/90 text-white shadow-md' : 'hover:text-slate-200'
               }`}
             >
-              오류
+              오류 ({invalidCount})
             </button>
           </div>
 
           {/* Page size controller */}
-          <div className="flex items-center justify-end gap-2 text-xs text-slate-400">
+          <div className="xl:col-span-2 flex items-center justify-end gap-2 text-xs text-slate-400">
             <span>표시:</span>
             <select
               value={rowsPerPage}
@@ -465,6 +522,40 @@ export default function PreviewTable({
         </div>
       </div>
 
+      {/* 오답유사 전용 안내 배너 */}
+      {statusFilter === 'odaub_yusa' && (
+        <div className="bg-pink-950/30 border-b border-pink-500/30 px-6 py-2.5 flex items-center justify-between gap-3 text-xs text-pink-200">
+          <div className="flex items-center gap-2">
+            <span className="px-2 py-0.5 rounded bg-pink-500/20 text-pink-300 font-bold border border-pink-500/40 text-[10px]">
+              오답유사 탭
+            </span>
+            <span className="text-[11px]">
+              학습유형이 <strong>오답유사</strong>인 항목입니다. 설정 규칙에 따라 메시지 본문에는 템플릿 문구 없이 <strong>평가명만</strong> 입력됩니다.
+            </span>
+          </div>
+          <span className="text-pink-300 font-mono text-[11px] shrink-0 font-medium">
+            총 {filteredRecords.length}건
+          </span>
+        </div>
+      )}
+
+      {/* 오류 전용 안내 배너 */}
+      {statusFilter === 'invalid' && (
+        <div className="bg-rose-950/30 border-b border-rose-500/30 px-6 py-2.5 flex items-center justify-between gap-3 text-xs text-rose-200">
+          <div className="flex items-center gap-2">
+            <span className="px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 font-bold border border-rose-500/40 text-[10px]">
+              오류 보류 탭
+            </span>
+            <span className="text-[11px]">
+              수신번호 결손 또는 형식 오류 등으로 발송이 보류된 건입니다. [상태] 열의 오류 원인을 확인한 후, 우측 <strong>[수정]</strong> 버튼으로 번호나 내용을 직접 보정할 수 있습니다.
+            </span>
+          </div>
+          <span className="text-rose-300 font-mono text-[11px] shrink-0 font-medium">
+            총 {filteredRecords.length}건
+          </span>
+        </div>
+      )}
+
       {/* Table Area */}
       <div className="overflow-x-auto">
         <table className="w-full text-left border-collapse">
@@ -474,7 +565,7 @@ export default function PreviewTable({
               <th className="py-3.5 px-4 w-36">수신번호 (A열)</th>
               <th className="py-3.5 px-4 w-48">과정명/분류</th>
               <th className="py-3.5 px-4">메시지 내용 (B열)</th>
-              <th className="py-3.5 px-4 w-32 text-center">상태</th>
+              <th className="py-3.5 px-4 min-w-[150px] max-w-[220px] text-center">상태</th>
               <th className="py-3.5 px-4 w-24 text-center">관리</th>
             </tr>
           </thead>
@@ -578,6 +669,7 @@ export default function PreviewTable({
                               }}
                               className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs focus:outline-none focus:border-sky-500 text-slate-100"
                             >
+                              <option value="오답유사">오답유사</option>
                               <option value="자습테스트">자습테스트</option>
                               <option value="주간평가">주간평가</option>
                               <option value="진단평가">진단평가</option>
@@ -604,10 +696,27 @@ export default function PreviewTable({
                       ) : (
                         <div className="flex flex-col items-start gap-1">
                           {r.courseName && r.courseName !== '[과정명]' ? (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-sky-500/10 text-sky-300 border border-sky-500/20 font-medium text-[11px]">
-                              <BookOpen className="w-3 h-3 text-sky-400" />
-                              {r.courseName}
-                            </span>
+                            <div className="flex flex-col items-start gap-0.5">
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-sky-500/10 text-sky-300 border border-sky-500/20 font-medium text-[11px]">
+                                <BookOpen className="w-3 h-3 text-sky-400" />
+                                {r.courseName}
+                              </span>
+                              {r.courseSource && (
+                                <span 
+                                  className="inline-flex items-center gap-1 text-[10px] text-slate-400 hover:text-sky-300 transition-colors cursor-help truncate max-w-[160px]"
+                                  title={`과정명 추출 출처: ${r.courseSource}`}
+                                >
+                                  <Info className="w-2.5 h-2.5 text-sky-400/80 flex-shrink-0" />
+                                  <span className="truncate">{r.courseSource}</span>
+                                </span>
+                              )}
+                            </div>
+                          ) : isOdaubYusaRecord(r) ? (
+                            <div className="flex items-center gap-1">
+                              <span className="px-2 py-0.5 rounded bg-pink-500/10 text-pink-300 border border-pink-500/20 text-[10px] font-medium">
+                                평가명 단독
+                              </span>
+                            </div>
                           ) : (
                             <div className="flex items-center gap-1.5">
                               <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] font-bold">
@@ -625,7 +734,13 @@ export default function PreviewTable({
                               </select>
                             </div>
                           )}
-                          <span className={`text-[10px] ${r.evalType && r.evalType !== '미분류' ? 'text-slate-400' : 'text-orange-400 font-medium'}`}>
+                          <span className={`text-[10px] ${
+                            r.evalType === '오답유사'
+                              ? 'text-pink-400 font-semibold'
+                              : r.evalType && r.evalType !== '미분류' 
+                                ? 'text-slate-400' 
+                                : 'text-orange-400 font-medium'
+                          }`}>
                             {r.evalType || '미분류'}
                           </span>
                         </div>
@@ -668,22 +783,31 @@ export default function PreviewTable({
                             <option value="invalid">오류 보류</option>
                             <option value="filtered_duplicate">중복 제외</option>
                             <option value="filtered_keyword">날짜 제외</option>
-                            <option value="filtered_odaub_yusa">오답유사 제외</option>
+                            <option value="filtered_odaub_yusa">오답유사</option>
                           </select>
                         </div>
                       ) : (
-                        <div className="flex flex-col items-center gap-1">
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${statusBadge}`}>
+                        <div className="flex flex-col items-center gap-1.5 py-0.5">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold border shrink-0 ${statusBadge}`}>
                             {r.status === 'success' && '정상 수신'}
                             {r.status === 'corrected' && '형식 교정'}
                             {r.status === 'unclassified' && '미분류 예외'}
                             {r.status === 'filtered_duplicate' && '중복 제외'}
                             {r.status === 'filtered_keyword' && '날짜 제외'}
-                            {r.status === 'filtered_odaub_yusa' && '오답유사 제외'}
+                            {r.status === 'filtered_odaub_yusa' && '오답유사'}
                             {r.status === 'invalid' && '오류 보류'}
                           </span>
                           {r.statusReason && (
-                            <span className="text-[9px] text-slate-500 max-w-[140px] truncate block" title={r.statusReason}>
+                            <span
+                              className={`text-[10px] leading-snug break-words whitespace-normal text-center max-w-[200px] ${
+                                r.status === 'invalid'
+                                  ? 'text-rose-300 font-medium bg-rose-950/40 px-2 py-1 rounded border border-rose-900/40'
+                                  : r.status === 'unclassified'
+                                    ? 'text-orange-300/90'
+                                    : 'text-slate-400'
+                              }`}
+                              title={r.statusReason}
+                            >
                               {r.statusReason}
                             </span>
                           )}
@@ -764,6 +888,28 @@ export default function PreviewTable({
           </button>
         </div>
       </div>
+
+      {/* Bottom Action Bar: Course Determination Process & Rules Guide */}
+      <div className="p-4 border-t border-slate-700/60 bg-slate-950/40 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
+        <div className="flex items-center gap-2 text-slate-400">
+          <Sparkles className="w-4 h-4 text-sky-400 shrink-0" />
+          <span>시험지명과 학습유형으로부터 과정명이 자동 분류되는 4단계 판정 알고리즘</span>
+        </div>
+        <button
+          onClick={() => setShowCourseProcessModal(true)}
+          className="inline-flex items-center gap-2 px-3.5 py-2 rounded-lg bg-sky-500/10 hover:bg-sky-500/20 text-sky-300 border border-sky-500/30 text-xs font-semibold transition-all cursor-pointer shadow-sm hover:border-sky-400/50 shrink-0"
+          title="과정명 자동 결정 규칙과 판별 과정을 상세히 확인합니다."
+        >
+          <Sparkles className="w-3.5 h-3.5 text-sky-400" />
+          과정명 판정 과정 및 규칙 보기
+        </button>
+      </div>
+
+      {/* Course Determination Process Modal */}
+      <CourseProcessModal 
+        isOpen={showCourseProcessModal} 
+        onClose={() => setShowCourseProcessModal(false)} 
+      />
     </div>
   );
 }

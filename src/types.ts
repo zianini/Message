@@ -23,6 +23,7 @@ export interface ConvertedRecord {
   status: 'success' | 'corrected' | 'unclassified' | 'filtered_duplicate' | 'filtered_keyword' | 'filtered_odaub_yusa' | 'invalid';
   statusReason?: string;
   courseName?: string;
+  courseSource?: string;
   evalType?: string;
   isCourseNameMissing?: boolean;
   isUnclassified?: boolean;

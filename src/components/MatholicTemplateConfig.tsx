@@ -213,11 +213,11 @@ export default function MatholicTemplateConfig({
         <div className="p-4 bg-slate-900/30 rounded-xl border border-slate-700/30 flex items-start gap-3.5 justify-between">
           <div className="space-y-1">
             <div className="flex items-center gap-2">
-              <Filter className="w-4 h-4 text-rose-400" />
-              <h4 className="text-xs font-bold text-white">학습유형 '오답유사' 자동 필터링</h4>
+              <Filter className="w-4 h-4 text-pink-400" />
+              <h4 className="text-xs font-bold text-white">학습유형 '오답유사' 별도 분류</h4>
             </div>
             <p className="text-[11px] text-slate-400 leading-relaxed">
-              오답 유사 유형의 학습은 문자로 보내지 않으므로 전송 대상 목록에서 자동으로 걸러냅니다.
+              오답 유사 유형 학습은 메시지 내용에 템플릿 대신 <strong>평가명만</strong> 입력되며, '오답유사' 전용 탭으로 자동 분류됩니다.
             </p>
           </div>
           

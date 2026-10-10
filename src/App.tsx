@@ -249,6 +249,7 @@ export default function App() {
       { 아이디: 'std006', bgm: '수신자_한지성', 이름: '한지성', 전화번호: '01012345678' }, // Duplicate phone number with std001 (강서준)
       { 아이디: 'std007', 이름: '임채원', 전화번호: '010-invalid' }, // Invalid format
       { 아이디: 'std008', 이름: '강태현', 전화번호: '' }, // Missing number
+      { 아이디: 'std009', 이름: '강나연', 전화번호: '010-9988-7766' }, // Kang Na-yeon
     ];
 
     // 2. Mock Messages/Schedule data as Matholic Learning History style
@@ -279,8 +280,11 @@ export default function App() {
       // Case 8: Missing phone mapping
       { 아이디: 'std008', 학생이름: '강태현', 평가명: '5-1 자습테스트', 학습유형: '자습테스트', 점수: '75', 완료일: '2026-07-16', 내용: '[쉐마수학]\n강태현 학생의 5-1 자습테스트 점수는 75점입니다.' },
  
-       // Case 9: Excluded by Date format ('7월 20일' pattern check)
+      // Case 9: Excluded by Date format ('7월 20일' pattern check)
       { 아이디: 'std003', 학생이름: '박우진', 평가명: '7월 20일 일일평가', 학습유형: '일일평가', 점수: '93', 완료일: '2026-07-20', 내용: '[쉐마수학]\n박우진 학생의 7월 20일 일일평가 점수는 93점입니다.' },
+
+      // Case 10: 강나연 학생 사례 (학습명 '1-1 진단평가', 완료일 '2026-10-08' -> 6-1 오인식 방지 및 1-1 정확 추출 검증)
+      { 아이디: 'std009', 학생이름: '강나연', 평가명: '1-1 진단평가', 학습유형: '진단평가', 점수: '95', 완료일: '2026-10-08', 내용: '[쉐마수학]\n강나연 학생의 1-1 진단평가 점수는 95점입니다.' },
     ];
 
     setPhoneBookHeaders(['아이디', '이름', '전화번호']);

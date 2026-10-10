@@ -184,55 +184,156 @@ export function isFriday(dateStr: string): boolean {
   return false;
 }
 
-// 과정명(5-1, 공통수학1 등) 추출 헬퍼
-export function extractCourseName(examName: string, content: string, row?: Record<string, any>): string {
-  const courses = [
-    '5-1', '5-2', '6-1', '6-2', '1-1', '1-2', '2-1', '2-2', '3-1', '3-2',
-    '공통수학1', '공통수학2', '대수', '미적분Ⅰ', '확률과 통계', '확통', '미적분2', '기하'
-  ];
-  // 1. Check examName first
-  for (const course of courses) {
-    if (examName.includes(course)) {
-      return course;
-    }
+// 대표 고등 및 특수 과정명 (길이가 긴 것 우선 매칭)
+export const HIGH_SCHOOL_COURSES = [
+  '공통수학1', '공통수학2', '공통수학',
+  '수학(상)', '수학(하)', '수학I', '수학II', '수학1', '수학2',
+  '대수', '미적분Ⅰ', '미적분I', '미적분2', '미적분',
+  '확률과 통계', '확통', '기하'
+];
+
+// 초/중등 과정명 정규식: 1-1 ~ 6-2 (앞뒤에 숫자가 붙지 않아야 날짜나 전화번호 오매칭 방지됨)
+export const MIDDLE_ELEMENTARY_REGEX = /(?<!\d)(?:(?:초등|중등|고등|초|중|고)\s*)?([1-6])\s*[-.]\s*([12])(?!\d)/;
+
+// '1상', '1하', '2상', '2하' 등 상/하 학기 표기 지원
+export const SANG_HA_REGEX = /(?<!\d)(?:(?:초등|중등|고등|초|중|고)\s*)?([1-6])\s*([상하])(?!\S)/;
+
+export interface CourseExtractionResult {
+  courseName: string;
+  source: string;
+  ruleStep: number;
+}
+
+// 문자열에서 안전하게 과정명을 추출하는 헬퍼
+export function parseCourseFromText(text: string): string | null {
+  if (!text) return null;
+  const clean = String(text).trim();
+
+  // 1. 고등/특수 과정명 확인 (공통수학1, 미적분Ⅰ 등)
+  for (const hc of HIGH_SCHOOL_COURSES) {
+    if (clean.includes(hc)) return hc;
   }
-  // 2. Check all string values in the row (especially '학습명' or other custom columns)
+
+  // 2. 초/중등 1-1 ~ 6-2 학년-학기 확인 (숫자 경계 엄격 검사: 2026-10-08, 010-6123 등 배제)
+  const m = clean.match(MIDDLE_ELEMENTARY_REGEX);
+  if (m) {
+    return `${m[1]}-${m[2]}`;
+  }
+
+  // 3. 상/하 학기 확인 (1상 -> 1-1, 2하 -> 2-2)
+  const mSangHa = clean.match(SANG_HA_REGEX);
+  if (mSangHa) {
+    const sem = mSangHa[2] === '상' ? '1' : '2';
+    return `${mSangHa[1]}-${sem}`;
+  }
+
+  return null;
+}
+
+// 과정명(5-1, 1-1, 공통수학1 등) 추출 헬퍼 (우선순위 파이프라인 및 판정 출처 기록)
+export function extractCourseNameWithDetails(
+  rawExamName: string,
+  content: string,
+  row?: Record<string, any>
+): CourseExtractionResult {
+  // 1단계 [최우선]: 엑셀 내 '과정명', '과정', '과목', '교재명' 등 전용 컬럼 우선 검사
   if (row) {
-    for (const key of Object.keys(row)) {
-      const val = String(row[key] || '');
-      for (const course of courses) {
-        if (val.includes(course)) {
-          return course;
+    const courseColKeywords = ['과정명', '과정', '과정구분', '교재명', '교재', '과목', 'course', 'subject'];
+    for (const [key, rawVal] of Object.entries(row)) {
+      if (courseColKeywords.some(kw => key.toLowerCase().includes(kw.toLowerCase()))) {
+        const val = String(rawVal || '').trim();
+        const found = parseCourseFromText(val);
+        if (found) {
+          return {
+            courseName: found,
+            source: `과정 전용 열 [${key}: "${val}"]`,
+            ruleStep: 1,
+          };
         }
       }
     }
   }
-  // 3. Check content
-  for (const course of courses) {
-    if (content.includes(course)) {
-      return course;
+
+  // 2단계: '시험지명 / 학습명'에서 추출 (날짜 제거 전 원본 문자열에서 안전 정규식으로 판별)
+  if (rawExamName) {
+    const found = parseCourseFromText(rawExamName);
+    if (found) {
+      return {
+        courseName: found,
+        source: `시험지명/학습명 ["${rawExamName.trim()}"]`,
+        ruleStep: 2,
+      };
     }
   }
-  return '';
+
+  // 3단계: 기타 안전한 열에서 검색 (단, 날짜/전화번호/아이디/점수 등 오매칭 유발 컬럼 엄격 제외)
+  if (row) {
+    const ignoreKeyPatterns = [
+      /일/i, /날짜/i, /date/i, /time/i, /시간/i,
+      /전화/i, /phone/i, /hp/i, /tel/i, /연락처/i,
+      /아이디/i, /id/i, /학번/i, /이름/i, /학생명/i, /name/i,
+      /점수/i, /score/i, /순번/i, /no/i, /번호/i, /index/i
+    ];
+    for (const [key, rawVal] of Object.entries(row)) {
+      if (ignoreKeyPatterns.some(pat => pat.test(key))) continue;
+      const val = String(rawVal || '').trim();
+      const found = parseCourseFromText(val);
+      if (found) {
+        return {
+          courseName: found,
+          source: `행 데이터 [${key}: "${val}"]`,
+          ruleStep: 3,
+        };
+      }
+    }
+  }
+
+  // 4단계: 메시지 본문에서 추출
+  if (content) {
+    const found = parseCourseFromText(content);
+    if (found) {
+      return {
+        courseName: found,
+        source: '메시지 본문 내용',
+        ruleStep: 4,
+      };
+    }
+  }
+
+  return {
+    courseName: '',
+    source: '자동 추출 실패 (수동 지정 필요)',
+    ruleStep: 0,
+  };
+}
+
+// 하위 호환성을 위한 extractCourseName 함수
+export function extractCourseName(examName: string, content: string, row?: Record<string, any>): string {
+  return extractCourseNameWithDetails(examName, content, row).courseName;
 }
 
 // 시험지명(학습명)에서 날짜 형식('7월 10일', '07.10', '7/10', '2026-07-10' 등) 및 요일을 제거하는 헬퍼
+// 주의: '1-1', '6-1' 등 하이픈(-)으로 연결된 학년-학기는 과정명이므로 절대 날짜로 취급해 지우지 않음!
 export function stripDateFromName(name: string): string {
   if (!name) return '';
   let clean = name;
 
-  // 1. 괄호와 요일이 붙은 날짜 패턴 -> (7/10), [07.10], (7월 10일 금), [7월 10일(금)] 등 제거
-  clean = clean.replace(/[([{\s]*(?:\d{4}년\s*)?\d{1,2}월\s*\d{1,2}일(?:\s*\([월화수목금토일]\))?[\])}\s]*/gi, ' ');
-  clean = clean.replace(/[([{\s]*\d{1,2}[-./]\d{1,2}(?:\s*\([월화수목금토일]\))?[\])}\s]*/gi, ' ');
+  // 1. 전체 날짜 YYYY-MM-DD, YYYY.MM.DD, YYYY/MM/DD (예: 2026-10-08, 2026.07.10)
+  clean = clean.replace(/\d{4}[-./]\d{1,2}[-./]\d{1,2}(?:\s*\(?[월화수목금토일](?:요일)?\)?)?/gi, ' ');
 
-  // 2. 일반 날짜 패턴 -> 2026년 7월 10일, 7월 10일, 2026-07-10, 7/10 등 제거
-  clean = clean.replace(/(?:\d{4}년\s*)?\d{1,2}월\s*\d{1,2}일/gi, ' ');
-  clean = clean.replace(/\d{4}[-./]\d{1,2}[-./]\d{1,2}/gi, ' ');
-  clean = clean.replace(/\b\d{1,2}[-./]\d{1,2}\b/gi, ' ');
+  // 2. 괄호로 둘러싸인 날짜: (7월 17일 금), [7월 17일], (7/10), [07.10]
+  // 주의: 하이픈(-)은 과정명(1-1, 6-2 등)이므로 슬래시(/)나 점(.)으로 구분된 날짜만 매칭!
+  clean = clean.replace(/[\(\[\{]\s*(?:(?:\d{4}년\s*)?\d{1,2}월\s*\d{1,2}일|\d{1,2}[\/\.]\d{1,2})\s*(?:\(?[월화수목금토일](?:요일)?\)?)?\s*[\)\]\}]/gi, ' ');
 
-  // 3. 요일 단독 패턴 -> (금), (월), 금요일 등 제거
-  clean = clean.replace(/[([{\s]*[월화수목금토일]요일[\])}\s]*/gi, ' ');
-  clean = clean.replace(/[([{\s]*\([월화수목금토일]\)[\])}\s]*/gi, ' ');
+  // 3. 괄호 없는 한글 날짜: 2026년 7월 10일, 7월 10일
+  clean = clean.replace(/(?:\d{4}년\s*)?\d{1,2}월\s*\d{1,2}일(?:\s*\(?[월화수목금토일](?:요일)?\)?)?/gi, ' ');
+
+  // 4. 슬래시(/)나 점(.)으로 된 단독 월/일: 7/10, 07.10 (하이픈 '-'은 절대 제거하지 않음!)
+  clean = clean.replace(/\b\d{1,2}[\/\.]\d{1,2}\b/gi, ' ');
+
+  // 5. 단독 요일: (금), (월), 금요일
+  clean = clean.replace(/[\(\[\{]\s*[월화수목금토일](?:요일)?\s*[\)\]\}]/gi, ' ');
+  clean = clean.replace(/\b[월화수목금토일]요일\b/gi, ' ');
 
   // 공백 정리
   clean = clean.replace(/\s+/g, ' ').trim();
@@ -284,6 +385,11 @@ export function determineEvaluationType(
     return '자습테스트';
   }
 
+  // 1-2. 오답유사: 학습유형 또는 학습명에 "오답유사" 또는 "유사오답" 포함
+  if (cleanType.includes('오답유사') || cleanType.includes('유사오답') || cleanExam.includes('오답유사') || cleanExam.includes('유사오답')) {
+    return '오답유사';
+  }
+
   // 2. 자습테스트: 학습유형이 "학습지" 포함 + 학습명에 "lv" 포함
   if (cleanType.includes('학습지')) {
     if (cleanExam.includes('lv')) {
@@ -300,6 +406,10 @@ export function determineEvaluationType(
 
     // 3-2. 진단평가: 학습명에 "진단평가", "진단 평가" 포함
     if (cleanExam.includes('진단평가') || cleanExam.includes('진단 평가')) {
+      const monthMatch = cleanExam.match(/(\d{1,2})월\s*진단\s*평가/);
+      if (monthMatch) {
+        return `${monthMatch[1]}월 진단평가`;
+      }
       const dateStr = getValueByKeywords(row, ['완료일', '학습일', '날짜', 'date', '일자', '완료일자']);
       const month = getMonthFromDate(dateStr);
       return `${month}월 진단평가`;
@@ -311,6 +421,10 @@ export function determineEvaluationType(
     return '주간평가';
   }
   if (cleanExam.includes('진단평가') || cleanExam.includes('진단 평가')) {
+    const monthMatch = cleanExam.match(/(\d{1,2})월\s*진단\s*평가/);
+    if (monthMatch) {
+      return `${monthMatch[1]}월 진단평가`;
+    }
     const dateStr = getValueByKeywords(row, ['완료일', '학습일', '날짜', 'date', '일자', '완료일자']);
     const month = getMonthFromDate(dateStr);
     return `${month}월 진단평가`;
@@ -318,6 +432,27 @@ export function determineEvaluationType(
 
   // 5. 그 밖에 예외 사항: 위 조건을 만족하지 못하는 경우 미분류('')
   return '';
+}
+
+// 오답유사 레코드인지 판정하는 헬퍼
+export function isOdaubYusaRecord(record: {
+  status?: string;
+  evalType?: string;
+  rawRow?: Record<string, any>;
+} | null | undefined): boolean {
+  if (!record) return false;
+  if (record.status === 'filtered_odaub_yusa') return true;
+  if (record.evalType === '오답유사' || record.evalType === '오답유사학습') return true;
+  if (record.rawRow) {
+    const learningType = getValueByKeywords(record.rawRow, ['학습유형', '유형', '구분', 'type']);
+    const cleanType = (learningType || '').trim().toLowerCase();
+    if (cleanType.includes('오답유사') || cleanType.includes('유사오답')) return true;
+
+    const examTitle = getValueByKeywords(record.rawRow, ['시험지명', '시험명', '평가명', '평가이름', '시험지', '평가', '학습명', '학습', '제목', '학습제목', 'title']);
+    const cleanTitle = (examTitle || '').trim().toLowerCase();
+    if (cleanTitle.includes('오답유사') || cleanTitle.includes('유사오답')) return true;
+  }
+  return false;
 }
 
 // 메시지 내용 및 관련 메타데이터를 세부 생성하는 헬퍼
@@ -331,6 +466,7 @@ export function generateMessageContentDetail(
   content: string;
   evalType: string;
   courseName: string;
+  courseSource: string;
   isCourseNameMissing: boolean;
   isUnclassified: boolean;
 } {
@@ -339,6 +475,7 @@ export function generateMessageContentDetail(
       content: defaultContent,
       evalType: '미분류',
       courseName: '',
+      courseSource: '행 데이터 없음',
       isCourseNameMissing: true,
       isUnclassified: true,
     };
@@ -355,24 +492,48 @@ export function generateMessageContentDetail(
       content: defaultContent,
       evalType: '미분류',
       courseName: '',
+      courseSource: '필수 필드 부재',
       isCourseNameMissing: true,
       isUnclassified: true,
     };
   }
 
   // 과정명 및 평가유형 추출
-  let examName = exam || '';
+  const rawExam = exam || '';
+  let examName = rawExam;
   if (settings.excludeDates) {
     examName = stripDateFromName(examName);
   }
 
-  const detectedCourse = extractCourseName(examName, defaultContent, row);
+  // 과정명 추출: 날짜 제거 전 원본 시험지명과 전체 row를 함께 전달하여 누락/오매칭 방지
+  const courseDetails = extractCourseNameWithDetails(rawExam || examName, defaultContent, row);
+  const detectedCourse = courseDetails.courseName;
   const courseName = overrideCourseName !== undefined ? overrideCourseName : detectedCourse;
+  const courseSource = overrideCourseName !== undefined ? '사용자 수동 지정' : courseDetails.source;
   const isCourseNameMissing = !courseName.trim();
 
   const rawEvalType = determineEvaluationType(row, examName, learningType);
   const isUnclassified = !rawEvalType;
   const evalType = rawEvalType || '미분류';
+
+  // [규칙 반영] 오답유사인 경우는 메세지 내용에 "평가명"만 넣어줌 (템플릿 미적용)
+  const cleanType = (learningType || '').trim().toLowerCase();
+  const cleanExam = (rawExam || '').trim().toLowerCase();
+  const isOdaubYusa = cleanType.includes('오답유사') || cleanType.includes('유사오답') ||
+                      cleanExam.includes('오답유사') || cleanExam.includes('유사오답') ||
+                      rawEvalType === '오답유사';
+
+  if (isOdaubYusa) {
+    const examOnly = (examName || rawExam || defaultContent).trim();
+    return {
+      content: examOnly,
+      evalType: '오답유사',
+      courseName,
+      courseSource,
+      isCourseNameMissing: false, // 오답유사는 평가명만 전송되므로 과정명 누락 경고 불필요
+      isUnclassified: false,
+    };
+  }
 
   // 평가명 포맷 구축
   let formattedExam = examName;
@@ -422,6 +583,7 @@ export function generateMessageContentDetail(
     content,
     evalType,
     courseName,
+    courseSource,
     isCourseNameMissing,
     isUnclassified,
   };
@@ -465,9 +627,8 @@ export function convertAndFilterRecords(
     const idKey = String(msgRow.idOrName).trim().toLowerCase();
     const originalPhone = phoneLookup.get(idKey) || '';
     
-    // 1. Determine if this is an excluded '오답유사'/'오답유사학습' record first
-    const learningType = getValueByKeywords(msgRow.rawRow, ['학습유형', '유형', '구분', 'type']);
-    const isOdaubYusa = settings.excludeOdaubYusa && (learningType === '오답유사' || learningType === '오답유사학습');
+    // 1. Determine if this is an '오답유사'/'오답유사학습' record first
+    const isOdaubYusa = isOdaubYusaRecord({ rawRow: msgRow.rawRow });
 
     // 2. Generate customized message content based on learning history templates if available
     const genDetail = generateMessageContentDetail(
@@ -512,6 +673,7 @@ export function convertAndFilterRecords(
       messageType,
       status: 'success',
       courseName: genDetail.courseName,
+      courseSource: genDetail.courseSource,
       evalType: genDetail.evalType,
       isCourseNameMissing: genDetail.isCourseNameMissing,
       isUnclassified: genDetail.isUnclassified,
@@ -519,9 +681,24 @@ export function convertAndFilterRecords(
     };
 
     // 4. Validation & Classification check
-    if (isOdaubYusa) {
+    if (settings.excludeOdaubYusa && isOdaubYusa) {
       record.status = 'filtered_odaub_yusa';
-      record.statusReason = "학습유형이 '오답유사' 또는 '오답유사학습'이므로 발송에서 제외되었습니다.";
+      record.statusReason = "학습유형이 '오답유사'이므로 발송 제외(오답유사 탭)되었습니다.";
+    } else if (isOdaubYusa) {
+      // excludeOdaubYusa 옵션이 꺼져있는 경우 오답유사 정상 발송 분류
+      if (!originalPhone) {
+        record.status = 'invalid';
+        record.statusReason = `전화번호부에서 '${msgRow.idOrName}'에 매칭되는 번호를 찾을 수 없습니다.`;
+      } else if (!phoneEval.isValid) {
+        record.status = 'invalid';
+        record.statusReason = phoneEval.reason;
+      } else if (!content.trim()) {
+        record.status = 'invalid';
+        record.statusReason = '메시지 내용이 비어있습니다.';
+      } else {
+        record.status = phoneEval.isCorrected ? 'corrected' : 'success';
+        if (phoneEval.isCorrected) record.statusReason = phoneEval.reason;
+      }
     } else if (!originalPhone) {
       record.status = 'invalid';
       record.statusReason = `전화번호부에서 '${msgRow.idOrName}'에 매칭되는 번호를 찾을 수 없습니다.`;
