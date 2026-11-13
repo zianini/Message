@@ -103,7 +103,7 @@ export function getValueByKeywords(row: Record<string, any> | undefined, keyword
   for (const key of Object.keys(row)) {
     const cleanKey = key.trim().toLowerCase();
     if (keywords.some(k => cleanKey === k.toLowerCase())) {
-      return String(row[key] || '').trim();
+      return String(row[key] ?? '').trim();
     }
   }
 
@@ -111,16 +111,25 @@ export function getValueByKeywords(row: Record<string, any> | undefined, keyword
   for (const key of Object.keys(row)) {
     const cleanKey = key.trim().toLowerCase();
     
-    // 시험지명/학습명/제목 등을 찾을 때 '학습일', '학습유형' 등의 날짜/타입 컬럼이 잘못 매칭되는 것을 방지
+    // 시험지명/학습명/제목 등을 찾을 때 '학습일', '학습월', '학습유형', '모바일 보고서' 등의 컬럼이 잘못 매칭되는 것을 방지
     const isSearchingForExam = keywords.includes('시험지명') || keywords.includes('시험명') || keywords.includes('학습명') || keywords.includes('제목');
     if (isSearchingForExam) {
-      if (cleanKey.includes('일') || cleanKey.includes('date') || cleanKey.includes('유형') || cleanKey.includes('구분') || cleanKey.includes('type')) {
+      if (
+        cleanKey.includes('일') ||
+        cleanKey.includes('월') ||
+        cleanKey.includes('date') ||
+        cleanKey.includes('유형') ||
+        cleanKey.includes('구분') ||
+        cleanKey.includes('type') ||
+        cleanKey.includes('모바일') ||
+        cleanKey.includes('보고서')
+      ) {
         continue;
       }
     }
 
     if (keywords.some(k => cleanKey.includes(k.toLowerCase()))) {
-      return String(row[key] || '').trim();
+      return String(row[key] ?? '').trim();
     }
   }
   return '';
@@ -184,16 +193,42 @@ export function isFriday(dateStr: string): boolean {
   return false;
 }
 
-// 대표 고등 및 특수 과정명 (길이가 긴 것 우선 매칭)
-export const HIGH_SCHOOL_COURSES = [
-  '공통수학1', '공통수학2', '공통수학',
-  '수학(상)', '수학(하)', '수학I', '수학II', '수학1', '수학2',
-  '대수', '미적분Ⅰ', '미적분I', '미적분2', '미적분',
-  '확률과 통계', '확통', '기하'
+// 대표 고등 및 특수 과정명 (길이가 긴 것 우선 매칭, 띄어쓰기/숫자 변형 포함)
+export const HIGH_SCHOOL_COURSES: Array<{ pattern: string; normalized: string }> = [
+  { pattern: '공통수학1', normalized: '공통수학1' },
+  { pattern: '공통수학 1', normalized: '공통수학1' },
+  { pattern: '공통수학2', normalized: '공통수학2' },
+  { pattern: '공통수학 2', normalized: '공통수학2' },
+  { pattern: '공통수학', normalized: '공통수학' },
+  { pattern: '수학(상)', normalized: '수학(상)' },
+  { pattern: '수학 (상)', normalized: '수학(상)' },
+  { pattern: '수학(하)', normalized: '수학(하)' },
+  { pattern: '수학 (하)', normalized: '수학(하)' },
+  { pattern: '수학II', normalized: '수학II' },
+  { pattern: '수학I', normalized: '수학I' },
+  { pattern: '수학2', normalized: '수학2' },
+  { pattern: '수학 2', normalized: '수학2' },
+  { pattern: '수학1', normalized: '수학1' },
+  { pattern: '수학 1', normalized: '수학1' },
+  { pattern: '대수', normalized: '대수' },
+  { pattern: '미적분Ⅰ', normalized: '미적분Ⅰ' },
+  { pattern: '미적분I', normalized: '미적분I' },
+  { pattern: '미적분 1', normalized: '미적분Ⅰ' },
+  { pattern: '미적분1', normalized: '미적분Ⅰ' },
+  { pattern: '미적분2', normalized: '미적분2' },
+  { pattern: '미적분 2', normalized: '미적분2' },
+  { pattern: '미적분', normalized: '미적분' },
+  { pattern: '확률과 통계', normalized: '확률과 통계' },
+  { pattern: '확률과통계', normalized: '확률과 통계' },
+  { pattern: '확통', normalized: '확통' },
+  { pattern: '기하', normalized: '기하' },
 ];
 
 // 초/중등 과정명 정규식: 1-1 ~ 6-2 (앞뒤에 숫자가 붙지 않아야 날짜나 전화번호 오매칭 방지됨)
-export const MIDDLE_ELEMENTARY_REGEX = /(?<!\d)(?:(?:초등|중등|고등|초|중|고)\s*)?([1-6])\s*[-.]\s*([12])(?!\d)/;
+export const MIDDLE_ELEMENTARY_REGEX = /(?<!\d)(?:(?:초등|중등|고등|초|중|고)\s*)?([1-6])\s*[-.–—]\s*([12])(?!\d)/;
+
+// '3학년 2학기', '중3 2학기', '초5 1학기' 등 학기 표기 지원
+export const HAKGI_REGEX = /(?<!\d)(?:(?:초등|중등|고등|초|중|고)\s*)?([1-6])\s*(?:학년)?\s*([12])\s*학기/;
 
 // '1상', '1하', '2상', '2하' 등 상/하 학기 표기 지원
 export const SANG_HA_REGEX = /(?<!\d)(?:(?:초등|중등|고등|초|중|고)\s*)?([1-6])\s*([상하])(?!\S)/;
@@ -211,7 +246,7 @@ export function parseCourseFromText(text: string): string | null {
 
   // 1. 고등/특수 과정명 확인 (공통수학1, 미적분Ⅰ 등)
   for (const hc of HIGH_SCHOOL_COURSES) {
-    if (clean.includes(hc)) return hc;
+    if (clean.includes(hc.pattern)) return hc.normalized;
   }
 
   // 2. 초/중등 1-1 ~ 6-2 학년-학기 확인 (숫자 경계 엄격 검사: 2026-10-08, 010-6123 등 배제)
@@ -220,7 +255,13 @@ export function parseCourseFromText(text: string): string | null {
     return `${m[1]}-${m[2]}`;
   }
 
-  // 3. 상/하 학기 확인 (1상 -> 1-1, 2하 -> 2-2)
+  // 3. '3학년 2학기', '중3 2학기' 등 학기 표기 확인
+  const mHakgi = clean.match(HAKGI_REGEX);
+  if (mHakgi) {
+    return `${mHakgi[1]}-${mHakgi[2]}`;
+  }
+
+  // 4. 상/하 학기 확인 (1상 -> 1-1, 2하 -> 2-2)
   const mSangHa = clean.match(SANG_HA_REGEX);
   if (mSangHa) {
     const sem = mSangHa[2] === '상' ? '1' : '2';
@@ -266,17 +307,19 @@ export function extractCourseNameWithDetails(
     }
   }
 
-  // 3단계: 기타 안전한 열에서 검색 (단, 날짜/전화번호/아이디/점수 등 오매칭 유발 컬럼 엄격 제외)
+  // 3단계: 기타 안전한 열에서 검색 (단, 날짜/학습월/모바일 보고서/URL/전화번호/아이디/점수 등 오매칭 유발 컬럼 엄격 제외)
   if (row) {
     const ignoreKeyPatterns = [
-      /일/i, /날짜/i, /date/i, /time/i, /시간/i,
+      /일/i, /학습월/i, /월$/i, /month/i, /날짜/i, /date/i, /time/i, /시간/i,
+      /모바일/i, /보고서/i, /report/i, /url/i, /link/i, /링크/i,
       /전화/i, /phone/i, /hp/i, /tel/i, /연락처/i,
       /아이디/i, /id/i, /학번/i, /이름/i, /학생명/i, /name/i,
       /점수/i, /score/i, /순번/i, /no/i, /번호/i, /index/i
     ];
     for (const [key, rawVal] of Object.entries(row)) {
       if (ignoreKeyPatterns.some(pat => pat.test(key))) continue;
-      const val = String(rawVal || '').trim();
+      const val = String(rawVal ?? '').trim();
+      if (!val || /^https?:\/\//i.test(val)) continue;
       const found = parseCourseFromText(val);
       if (found) {
         return {

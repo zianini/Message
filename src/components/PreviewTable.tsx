@@ -718,20 +718,30 @@ export default function PreviewTable({
                               </span>
                             </div>
                           ) : (
-                            <div className="flex items-center gap-1.5">
-                              <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] font-bold">
-                                과정명 미입력
-                              </span>
-                              <select
-                                onChange={(e) => handleApplyCourseName(r, e.target.value)}
-                                defaultValue=""
-                                className="bg-slate-900 border border-amber-500/40 text-amber-200 rounded px-1.5 py-0.5 text-[10px] focus:outline-none"
-                              >
-                                <option value="" disabled>지정하기</option>
-                                {COURSE_OPTIONS.map(c => (
-                                  <option key={c} value={c}>{c}</option>
-                                ))}
-                              </select>
+                            <div className="flex flex-col items-start gap-1">
+                              <div className="flex items-center gap-1.5">
+                                <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] font-bold">
+                                  과정명 미입력
+                                </span>
+                                <select
+                                  onChange={(e) => handleApplyCourseName(r, e.target.value)}
+                                  defaultValue=""
+                                  className="bg-slate-900 border border-amber-500/40 text-amber-200 rounded px-1.5 py-0.5 text-[10px] focus:outline-none"
+                                >
+                                  <option value="" disabled>지정하기</option>
+                                  {COURSE_OPTIONS.map(c => (
+                                    <option key={c} value={c}>{c}</option>
+                                  ))}
+                                </select>
+                              </div>
+                              {(() => {
+                                const rawExamTitle = getValueByKeywords(r.rawRow, ['시험지명', '시험명', '평가명', '평가이름', '시험지', '평가', '학습명', '학습', '제목', '학습제목', 'title']);
+                                return rawExamTitle ? (
+                                  <span className="text-[10px] text-slate-400 break-words max-w-[180px]" title={`인식된 학습명: ${rawExamTitle}`}>
+                                    원본 학습명: {rawExamTitle}
+                                  </span>
+                                ) : null;
+                              })()}
                             </div>
                           )}
                           <span className={`text-[10px] ${

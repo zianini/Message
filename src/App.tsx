@@ -23,6 +23,10 @@ import {
   convertAndFilterRecords, 
   calculateStats
 } from './utils/converter';
+import {
+  getSavedPickerHandle,
+  savePickerHandle
+} from './utils/folderMemory';
 
 import Dashboard from './components/Dashboard';
 import SettingsPanel from './components/SettingsPanel';
@@ -194,38 +198,63 @@ export default function App() {
     reader.readAsBinaryString(file);
   };
 
-  // Open file picker with directory memory (Phonebook: remembered folder / Matholic: default Downloads folder)
+  // Open file picker: Phonebook remembers previous folder, Matholic always opens in Downloads folder
   const handlePickFileWithPicker = async (type: 'phonebook' | 'message') => {
     if ('showOpenFilePicker' in window) {
-      try {
-        const pickerOpts: any = {
-          types: [
-            {
-              description: 'Excel & CSV Files',
-              accept: {
-                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
-                'application/vnd.ms-excel': ['.xls'],
-                'text/csv': ['.csv'],
-              },
+      const baseOpts: any = {
+        types: [
+          {
+            description: 'Excel & CSV Files',
+            accept: {
+              'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
+              'application/vnd.ms-excel': ['.xls'],
+              'text/csv': ['.csv'],
             },
-          ],
-          excludeAcceptAllOption: false,
-          multiple: false,
-        };
+          },
+        ],
+        excludeAcceptAllOption: false,
+        multiple: false,
+      };
 
+      try {
         if (type === 'phonebook') {
-          // 전화번호부: 매번 올리는 파일의 폴더 주소를 기억하도록 고유 id 사용
-          pickerOpts.id = 'phonebook-excel-dir';
-        } else {
-          // 매쓰홀릭 학습이력: 디폴트가 다운로드(downloads) 폴더가 되도록 startIn 및 id 지정
-          pickerOpts.id = 'matholic-downloads-excel-dir';
-          pickerOpts.startIn = 'downloads';
-        }
+          // 전화번호부: 이전에 선택한 폴더 위치를 기억해서 열기
+          const savedHandle = await getSavedPickerHandle('phonebook');
+          const pickerOpts: any = {
+            ...baseOpts,
+            id: 'phonebook-excel-dir',
+            ...(savedHandle ? { startIn: savedHandle } : {}),
+          };
 
-        const [fileHandle] = await (window as any).showOpenFilePicker(pickerOpts);
-        const file = await fileHandle.getFile();
-        handleFileLoad(file, type);
-        return;
+          let fileHandle: any;
+          try {
+            [fileHandle] = await (window as any).showOpenFilePicker(pickerOpts);
+          } catch (innerErr: any) {
+            if (innerErr.name === 'AbortError') return;
+            if (savedHandle && innerErr.name !== 'SecurityError') {
+              [fileHandle] = await (window as any).showOpenFilePicker({
+                ...baseOpts,
+                id: 'phonebook-excel-dir',
+              });
+            } else {
+              throw innerErr;
+            }
+          }
+
+          await savePickerHandle('phonebook', fileHandle);
+          const file = await fileHandle.getFile();
+          handleFileLoad(file, type);
+          return;
+        } else {
+          // 매쓰홀릭 학습이력: 항상 다운로드(Downloads) 폴더에서 열기
+          const [fileHandle] = await (window as any).showOpenFilePicker({
+            ...baseOpts,
+            startIn: 'downloads',
+          });
+          const file = await fileHandle.getFile();
+          handleFileLoad(file, type);
+          return;
+        }
       } catch (err: any) {
         if (err.name === 'AbortError') return; // 사용자가 창을 닫은 경우
         console.warn('showOpenFilePicker error, falling back to input click:', err);
@@ -625,7 +654,7 @@ export default function App() {
                   전화번호부 파일 올리기
                 </button>
                 <div className="text-[10px] text-slate-500 mt-2.5 flex items-center gap-1">
-                  <span className="text-sky-400 font-semibold">📁 이전 지정 폴더 자동 기억</span>
+                  <span className="text-sky-400 font-semibold">📁 이전 폴더 위치 기억</span>
                   <span>• Excel / CSV 지원</span>
                 </div>
               </div>
@@ -700,7 +729,7 @@ export default function App() {
                   학습이력 파일 올리기
                 </button>
                 <div className="text-[10px] text-slate-500 mt-2.5 flex items-center gap-1">
-                  <span className="text-purple-400 font-semibold">📥 Downloads 폴더 기본 선택</span>
+                  <span className="text-purple-400 font-semibold">📥 다운로드(Downloads) 폴더 열기</span>
                   <span>• 3번째 시트 자동 인식</span>
                 </div>
               </div>

@@ -115,7 +115,7 @@ export default function CourseProcessModal({ isOpen, onClose }: CourseProcessMod
                   </div>
                   <h4 className="font-bold text-white text-xs mb-1">기타 안전 열 검사 (오매칭 차단)</h4>
                   <p className="text-[11px] text-slate-400 leading-relaxed">
-                    날짜(완료일, 채점일), 전화번호, 학생ID, 점수 등 오매칭을 일으키는 열을 엄격히 배제하고 안전한 설명/교재 열만 검사합니다.
+                    날짜(완료일, 학습일, 학습월), 모바일 보고서(URL), 전화번호, 학생ID, 점수 등 오매칭을 일으키는 열을 엄격히 배제하고 안전한 설명/교재 열만 검사합니다.
                   </p>
                 </div>
                 <div className="mt-3 pt-2 border-t border-slate-700/40 text-[10px] text-amber-400 font-medium flex items-center gap-1">
