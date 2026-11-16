@@ -130,9 +130,10 @@ export default function App() {
   const phoneBookInputRef = useRef<HTMLInputElement | null>(null);
   const messageInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Detect iframe or unsupported File System Access API -> use native <label htmlFor> directly
+  // Detect iframe, unsupported API, or previously blocked showOpenFilePicker -> use native <label htmlFor>
   const [pickerUnavailable, setPickerUnavailable] = useState<boolean>(() => {
     try {
+      if (localStorage.getItem('aligo_picker_unavailable') === '1') return true;
       return window.self !== window.top || !('showOpenFilePicker' in window);
     } catch {
       return true;
@@ -328,6 +329,8 @@ export default function App() {
   // Open file picker: Phonebook remembers previous folder via id, Matholic opens Downloads folder
   const handlePickFileWithPicker = async (type: 'phonebook' | 'message') => {
     const inputRef = type === 'phonebook' ? phoneBookInputRef : messageInputRef;
+    const setError = type === 'phonebook' ? setPhoneBookError : setMessageError;
+    setError(null);
 
     if (!pickerUnavailable && 'showOpenFilePicker' in window) {
       const pickerOpts: any = {
@@ -346,28 +349,58 @@ export default function App() {
         multiple: false,
       };
 
+      let fileHandle: any;
       try {
-        const [fileHandle] = await (window as any).showOpenFilePicker(pickerOpts);
-        const file = await fileHandle.getFile();
-        handleFileLoad(file, type);
-        return;
+        [fileHandle] = await (window as any).showOpenFilePicker(pickerOpts);
       } catch (err: any) {
         if (err?.name === 'AbortError') return; // 사용자가 창을 닫은 경우
+
+        const errDetail = err?.name ? `${err.name}${err?.message ? `: ${err.message}` : ''}` : '알 수 없는 오류';
         console.warn('showOpenFilePicker failed, switching to native input:', err);
-        setPickerUnavailable(true);
-        // Try synchronous fallback, and if browser blocks it after await, guide user to click once more
+
         try {
-          inputRef.current?.click();
+          localStorage.setItem('aligo_picker_unavailable', '1');
         } catch {
-          // ignore
+          // ignore storage errors
         }
+        setPickerUnavailable(true);
+
+        // Try triggering fallback input (may be blocked after async await in strict browsers)
+        let fallbackTriggered = false;
+        try {
+          if (inputRef.current) {
+            inputRef.current.click();
+            fallbackTriggered = true;
+          }
+        } catch {
+          fallbackTriggered = false;
+        }
+
+        const msg = `폴더 기억 파일 선택창(${errDetail})이 현재 브라우저 환경에서 차단/실패하여 기본 파일 선택 모드로 전환했습니다. ${
+          fallbackTriggered ? '창이 안 열렸다면 ' : ''
+        }위 버튼을 한 번 더 눌러주세요.`;
+        setError(msg);
         setAppNotice({
-          type: 'info',
-          title: '기본 파일 선택 모드로 전환되었습니다',
-          message: '브라우저 보안 정책으로 폴더 기억 탐색기가 차단되어 기본 파일 선택 방식으로 전환했습니다. 창이 열리지 않았다면 업로드 버튼을 한 번 더 눌러주세요.',
+          type: 'warning',
+          title: '기본 파일 선택 모드로 전환됨 (원인 확인)',
+          message: msg,
         });
         return;
       }
+
+      try {
+        const file = await fileHandle.getFile();
+        handleFileLoad(file, type);
+      } catch (fileErr: any) {
+        const msg = `선택한 파일을 읽어오는 데 실패했습니다. (${fileErr?.name || 'Error'}: ${fileErr?.message || '권한 또는 파일 접근 오류'})`;
+        setError(msg);
+        setAppNotice({
+          type: 'error',
+          title: '파일 접근 오류',
+          message: msg,
+        });
+      }
+      return;
     }
 
     inputRef.current?.click();
@@ -855,7 +888,9 @@ export default function App() {
                   </button>
                 )}
                 <div className="text-[10px] text-slate-500 mt-2.5 flex items-center gap-1">
-                  <span className="text-sky-400 font-semibold">📁 이전 폴더 위치 기억</span>
+                  <span className="text-sky-400 font-semibold">
+                    {pickerUnavailable ? '📁 기본 파일 선택 모드' : '📁 이전 폴더 위치 기억'}
+                  </span>
                   <span>• Excel / CSV 지원</span>
                 </div>
               </div>
@@ -973,7 +1008,9 @@ export default function App() {
                   </button>
                 )}
                 <div className="text-[10px] text-slate-500 mt-2.5 flex items-center gap-1">
-                  <span className="text-purple-400 font-semibold">📥 다운로드(Downloads) 폴더 열기</span>
+                  <span className="text-purple-400 font-semibold">
+                    {pickerUnavailable ? '📥 기본 파일 선택 모드' : '📥 다운로드(Downloads) 폴더 열기'}
+                  </span>
                   <span>• 3번째 시트 자동 인식</span>
                 </div>
               </div>
