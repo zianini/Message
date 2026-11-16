@@ -132,35 +132,68 @@ export default function App() {
   const phoneBookInputRef = useRef<HTMLInputElement | null>(null);
   const messageInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Detect iframe, unsupported API, or previously blocked showOpenFilePicker -> use native <label htmlFor>
-  const [pickerUnavailable, setPickerUnavailable] = useState<boolean>(() => {
+  // Detect iframe or unsupported API -> must use native <label htmlFor>
+  const isPickerEnvironmentBlocked = () => {
     try {
-      if (localStorage.getItem('aligo_picker_unavailable') === '1') return true;
       return window.self !== window.top || !('showOpenFilePicker' in window);
+    } catch {
+      return true;
+    }
+  };
+
+  // Track native <input> fallback independently per uploader so one card falling back doesn't disable the other's folder behavior
+  const [phoneBookUseNative, setPhoneBookUseNative] = useState<boolean>(() => {
+    try {
+      if (localStorage.getItem('aligo_native_phonebook') === '1') return true;
+      return isPickerEnvironmentBlocked();
+    } catch {
+      return true;
+    }
+  });
+  const [messageUseNative, setMessageUseNative] = useState<boolean>(() => {
+    try {
+      if (localStorage.getItem('aligo_native_message') === '1') return true;
+      return isPickerEnvironmentBlocked();
     } catch {
       return true;
     }
   });
 
-  const switchToNativePicker = () => {
-    try {
-      localStorage.setItem('aligo_picker_unavailable', '1');
-    } catch {
-      // ignore storage errors
+  const switchToNativePicker = (type: 'phonebook' | 'message') => {
+    if (type === 'phonebook') {
+      try {
+        localStorage.setItem('aligo_native_phonebook', '1');
+      } catch {
+        // ignore storage errors
+      }
+      setPhoneBookUseNative(true);
+      setPhoneBookPickerNotice(null);
+      setPhoneBookError(null);
+      setAppNotice({
+        type: 'info',
+        title: '전화번호부: 기본 파일 선택 모드로 전환됨',
+        message: '전화번호부 업로드는 브라우저 기본 파일 선택창을 사용합니다. (학습이력 파일의 다운로드 폴더 열기는 별도로 유지됩니다)',
+      });
+      phoneBookInputRef.current?.click();
+    } else {
+      try {
+        localStorage.setItem('aligo_native_message', '1');
+      } catch {
+        // ignore storage errors
+      }
+      setMessageUseNative(true);
+      setMessagePickerNotice(null);
+      setMessageError(null);
+      setAppNotice({
+        type: 'info',
+        title: '학습이력: 기본 파일 선택 모드로 전환됨',
+        message: '학습이력 업로드는 브라우저 기본 파일 선택창을 사용합니다. (드래그 앤 드롭도 바로 사용 가능합니다)',
+      });
+      messageInputRef.current?.click();
     }
-    setPickerUnavailable(true);
-    setPhoneBookPickerNotice(null);
-    setMessagePickerNotice(null);
-    setPhoneBookError(null);
-    setMessageError(null);
-    setAppNotice({
-      type: 'info',
-      title: '기본 파일 선택 모드로 전환됨',
-      message: '이제 업로드 버튼을 누르면 브라우저 기본 파일 선택창이 바로 열립니다. (드래그 앤 드롭도 계속 사용 가능합니다)',
-    });
   };
 
-  const tryEnableFolderPicker = () => {
+  const tryEnableFolderPicker = (type: 'phonebook' | 'message') => {
     if (!('showOpenFilePicker' in window)) {
       setAppNotice({
         type: 'warning',
@@ -169,14 +202,23 @@ export default function App() {
       });
       return;
     }
-    try {
-      localStorage.removeItem('aligo_picker_unavailable');
-    } catch {
-      // ignore storage errors
+    if (type === 'phonebook') {
+      try {
+        localStorage.removeItem('aligo_native_phonebook');
+      } catch {
+        // ignore storage errors
+      }
+      setPhoneBookUseNative(false);
+      setPhoneBookPickerNotice(null);
+    } else {
+      try {
+        localStorage.removeItem('aligo_native_message');
+      } catch {
+        // ignore storage errors
+      }
+      setMessageUseNative(false);
+      setMessagePickerNotice(null);
     }
-    setPickerUnavailable(false);
-    setPhoneBookPickerNotice(null);
-    setMessagePickerNotice(null);
   };
 
   // Auto-map columns when headers are parsed
@@ -357,10 +399,14 @@ export default function App() {
     const setError = type === 'phonebook' ? setPhoneBookError : setMessageError;
     const setPickerNotice = type === 'phonebook' ? setPhoneBookPickerNotice : setMessagePickerNotice;
 
+    const useNative = type === 'phonebook' ? phoneBookUseNative : messageUseNative;
+    const setUseNative = type === 'phonebook' ? setPhoneBookUseNative : setMessageUseNative;
+    const storageKey = type === 'phonebook' ? 'aligo_native_phonebook' : 'aligo_native_message';
+
     setError(null);
     setPickerNotice(null);
 
-    if (!pickerUnavailable && 'showOpenFilePicker' in window) {
+    if (!useNative && 'showOpenFilePicker' in window) {
       const pickerOpts: any = {
         ...(type === 'phonebook' ? { id: 'phonebook-excel-dir' } : { startIn: 'downloads' }),
         types: [
@@ -368,7 +414,7 @@ export default function App() {
             description: 'Excel & CSV Files',
             accept: {
               'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx', '.xlsm'],
-              'application/vnd.ms-excel': ['.xls', '.csv'],
+              'application/vnd.ms-excel': ['.xls'],
               'text/csv': ['.csv'],
             },
           },
@@ -382,8 +428,9 @@ export default function App() {
         handles = await (window as any).showOpenFilePicker(pickerOpts);
       } catch (err: any) {
         if (err?.name === 'AbortError') {
+          const detail = err?.message ? ` (브라우저 응답: ${err.message})` : '';
           setPickerNotice(
-            '파일 선택창이 닫혔거나, 브라우저 보안 정책(폴더/파일 접근 제한)으로 파일 전달이 중단되었습니다. 파일을 선택했는데도 업로드되지 않았다면 아래 버튼으로 기본 파일 선택 모드로 전환해 주세요.'
+            `파일 선택창이 닫혔거나, 브라우저/폴더 보안 정책(보호 폴더·클라우드 동기화 폴더·파일 읽기 권한 제한 등)으로 파일 전달이 중단되었습니다.${detail} 아래 버튼을 누르면 기본 파일 선택창이 바로 열립니다.`
           );
           return;
         }
@@ -392,11 +439,11 @@ export default function App() {
         console.warn('showOpenFilePicker failed, switching to native input:', err);
 
         try {
-          localStorage.setItem('aligo_picker_unavailable', '1');
+          localStorage.setItem(storageKey, '1');
         } catch {
           // ignore storage errors
         }
-        setPickerUnavailable(true);
+        setUseNative(true);
 
         let fallbackTriggered = false;
         try {
@@ -408,7 +455,7 @@ export default function App() {
           fallbackTriggered = false;
         }
 
-        const msg = `폴더 기억 파일 선택창(${errDetail})이 현재 브라우저 환경에서 차단/실패하여 기본 파일 선택 모드로 전환했습니다. ${
+        const msg = `폴더 기억 파일 선택창(${errDetail})이 현재 브라우저 환경에서 차단/실패하여 이 항목을 기본 파일 선택 모드로 전환했습니다. ${
           fallbackTriggered ? '창이 안 열렸다면 ' : ''
         }위 버튼을 한 번 더 눌러주세요.`;
         setError(msg);
@@ -906,14 +953,14 @@ export default function App() {
                     </div>
                     <button
                       type="button"
-                      onClick={switchToNativePicker}
-                      className="w-full py-1.5 px-3 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/40 text-amber-200 font-semibold text-[11px] transition-colors cursor-pointer"
+                      onClick={() => switchToNativePicker('phonebook')}
+                      className="w-full py-2 px-3 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/40 text-amber-200 font-semibold text-[11px] transition-colors cursor-pointer"
                     >
-                      기본 파일 선택 모드로 전환하기
+                      기본 파일 선택 모드로 전환 & 바로 파일 열기
                     </button>
                   </div>
                 )}
-                {pickerUnavailable ? (
+                {phoneBookUseNative ? (
                   <label
                     htmlFor="phonebook-upload-input"
                     className={`mt-5 px-5 py-2.5 bg-sky-600 hover:bg-sky-500 text-white rounded-lg text-xs font-semibold cursor-pointer transition-colors shadow-md flex items-center gap-1.5 ${
@@ -954,13 +1001,13 @@ export default function App() {
                 )}
                 <div className="text-[10px] text-slate-500 mt-2.5 flex items-center gap-1 flex-wrap justify-center">
                   <span className="text-sky-400 font-semibold">
-                    {pickerUnavailable ? '📁 기본 파일 선택 모드' : '📁 이전 폴더 위치 기억'}
+                    {phoneBookUseNative ? '📁 기본 파일 선택 모드' : '📁 이전 폴더 위치 기억'}
                   </span>
                   <span>• Excel / CSV 지원</span>
-                  {pickerUnavailable && (
+                  {phoneBookUseNative && (
                     <button
                       type="button"
-                      onClick={tryEnableFolderPicker}
+                      onClick={() => tryEnableFolderPicker('phonebook')}
                       className="text-slate-400 hover:text-sky-400 underline underline-offset-2 ml-1 cursor-pointer"
                     >
                       (폴더 기억 복원)
@@ -1050,14 +1097,14 @@ export default function App() {
                     </div>
                     <button
                       type="button"
-                      onClick={switchToNativePicker}
-                      className="w-full py-1.5 px-3 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/40 text-amber-200 font-semibold text-[11px] transition-colors cursor-pointer"
+                      onClick={() => switchToNativePicker('message')}
+                      className="w-full py-2 px-3 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/40 text-amber-200 font-semibold text-[11px] transition-colors cursor-pointer"
                     >
-                      기본 파일 선택 모드로 전환하기
+                      기본 파일 선택 모드로 전환 & 바로 파일 열기
                     </button>
                   </div>
                 )}
-                {pickerUnavailable ? (
+                {messageUseNative ? (
                   <label
                     htmlFor="message-upload-input"
                     className={`mt-5 px-5 py-2.5 bg-sky-600 hover:bg-sky-500 text-white rounded-lg text-xs font-semibold cursor-pointer transition-colors shadow-md flex items-center gap-1.5 ${
@@ -1098,13 +1145,13 @@ export default function App() {
                 )}
                 <div className="text-[10px] text-slate-500 mt-2.5 flex items-center gap-1 flex-wrap justify-center">
                   <span className="text-purple-400 font-semibold">
-                    {pickerUnavailable ? '📥 기본 파일 선택 모드' : '📥 다운로드(Downloads) 폴더 열기'}
+                    {messageUseNative ? '📥 기본 파일 선택 모드' : '📥 다운로드(Downloads) 폴더 열기'}
                   </span>
                   <span>• 3번째 시트 자동 인식</span>
-                  {pickerUnavailable && (
+                  {messageUseNative && (
                     <button
                       type="button"
-                      onClick={tryEnableFolderPicker}
+                      onClick={() => tryEnableFolderPicker('message')}
                       className="text-slate-400 hover:text-purple-400 underline underline-offset-2 ml-1 cursor-pointer"
                     >
                       (폴더 기억 복원)
