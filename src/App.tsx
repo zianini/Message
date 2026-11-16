@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { 
   FileSpreadsheet, 
@@ -11,7 +11,9 @@ import {
   CheckCircle2,
   ChevronDown,
   Sliders,
-  Settings2
+  Settings2,
+  AlertTriangle,
+  Loader2
 } from 'lucide-react';
 
 import { 
@@ -117,6 +119,28 @@ export default function App() {
   const [dragOverPhoneBook, setDragOverPhoneBook] = useState(false);
   const [dragOverMessage, setDragOverMessage] = useState(false);
 
+  // Loading & Error / Notice states (replaces browser alert() which is blocked inside iframes)
+  const [isLoadingPhoneBook, setIsLoadingPhoneBook] = useState(false);
+  const [isLoadingMessage, setIsLoadingMessage] = useState(false);
+  const [phoneBookError, setPhoneBookError] = useState<string | null>(null);
+  const [messageError, setMessageError] = useState<string | null>(null);
+  const [appNotice, setAppNotice] = useState<{
+    type: 'error' | 'warning' | 'success';
+    title: string;
+    message: string;
+  } | null>(null);
+
+  // Refs for synchronous file input fallback & preloaded FileSystemFileHandle
+  const phoneBookInputRef = useRef<HTMLInputElement | null>(null);
+  const messageInputRef = useRef<HTMLInputElement | null>(null);
+  const savedPhonebookHandleRef = useRef<any>(null);
+
+  useEffect(() => {
+    getSavedPickerHandle('phonebook').then((handle) => {
+      savedPhonebookHandleRef.current = handle;
+    });
+  }, []);
+
   // Auto-map columns when headers are parsed
   const autoMapHeaders = (headers: string[], type: 'phonebook' | 'message') => {
     if (type === 'phonebook') {
@@ -148,36 +172,90 @@ export default function App() {
 
   // Excel file loader handler
   const handleFileLoad = (file: File, type: 'phonebook' | 'message') => {
+    const setLoading = type === 'phonebook' ? setIsLoadingPhoneBook : setIsLoadingMessage;
+    const setError = type === 'phonebook' ? setPhoneBookError : setMessageError;
+
+    setError(null);
+    setAppNotice(null);
+    setLoading(true);
+
     const reader = new FileReader();
+
+    reader.onerror = () => {
+      const msg = `파일("${file.name}")을 읽는 중 브라우저 오류가 발생했습니다. 파일이 다른 프로그램에서 잠겨 있거나 접근 권한이 없는지 확인해 주세요.`;
+      setError(msg);
+      setAppNotice({
+        type: 'error',
+        title: type === 'phonebook' ? '전화번호부 파일 읽기 실패' : '학습이력 파일 읽기 실패',
+        message: msg,
+      });
+      setLoading(false);
+    };
+
+    reader.onabort = () => {
+      const msg = `파일("${file.name}") 읽기가 중단되었습니다. 다시 시도해 주세요.`;
+      setError(msg);
+      setLoading(false);
+    };
+
     reader.onload = (e) => {
       try {
         const data = e.target?.result;
-        if (!data) return;
-        
-        const workbook = XLSX.read(data, { type: 'binary' });
-        
-        // 1. 메세지 내용파일은 3번째 시트의 학습이력을 가지고와야함.
+        if (!data) {
+          throw new Error('파일 내용이 비어 있어 읽을 수 없습니다.');
+        }
+
+        const workbook = XLSX.read(new Uint8Array(data as ArrayBuffer), { type: 'array' });
+
+        if (!workbook.SheetNames || workbook.SheetNames.length === 0) {
+          throw new Error('엑셀 파일에 시트(Sheet)가 존재하지 않습니다.');
+        }
+
+        // 1. 매쓰홀릭 학습이력 파일은 3번째 시트 우선 사용
         let sheetName = workbook.SheetNames[0];
         if (type === 'message') {
           if (workbook.SheetNames.length >= 3) {
             sheetName = workbook.SheetNames[2];
           } else {
-            alert(`매쓰홀릭 학습이력 파일은 3번째 시트에 데이터가 있어야 합니다. 현재 파일에는 ${workbook.SheetNames.length}개의 시트만 존재하여 첫 번째 시트를 불러옵니다.`);
+            setAppNotice({
+              type: 'warning',
+              title: '시트 개수 확인 안내',
+              message: `매쓰홀릭 학습이력 파일은 보통 3번째 시트에 데이터가 있습니다. 현재 파일("${file.name}")에는 ${workbook.SheetNames.length}개의 시트만 존재하여 첫 번째 시트("${sheetName}")를 불러옵니다.`,
+            });
           }
         }
-        
+
         const sheet = workbook.Sheets[sheetName];
-        
+        if (!sheet) {
+          throw new Error(`시트("${sheetName}")를 불러올 수 없습니다.`);
+        }
+
         // Convert sheet data to JSON containing all columns
         const json: any[] = XLSX.utils.sheet_to_json(sheet, { defval: '' });
-        
+
         if (json.length === 0) {
-          alert('엑셀 파일에 데이터가 비어있습니다. 데이터를 확인하고 다시 시도해 주세요.');
+          const emptyMsg = `선택한 시트("${sheetName}")에 데이터가 비어 있습니다. (파일 내 시트 목록: ${workbook.SheetNames.join(', ')})`;
+          setError(emptyMsg);
+          setAppNotice({
+            type: 'error',
+            title: type === 'phonebook' ? '전화번호부 데이터 없음' : '학습이력 데이터 없음',
+            message: emptyMsg,
+          });
           return;
         }
 
         // Extract headers from first non-empty row keys
         const headers = Object.keys(json[0] || {});
+        if (headers.length === 0) {
+          const headerMsg = `시트("${sheetName}")에서 열 제목(헤더)을 찾을 수 없습니다.`;
+          setError(headerMsg);
+          setAppNotice({
+            type: 'error',
+            title: '열 제목 인식 실패',
+            message: headerMsg,
+          });
+          return;
+        }
 
         if (type === 'phonebook') {
           setPhoneBookFile(file);
@@ -190,17 +268,36 @@ export default function App() {
           setMessageHeaders(headers);
           autoMapHeaders(headers, 'message');
         }
-      } catch (err) {
-        console.error(err);
-        alert('엑셀 파일을 읽는 도중 오류가 발생했습니다. 표준 Excel (.xlsx) 파일이 맞는지 확인해 주세요.');
+      } catch (err: any) {
+        console.error('Excel parse error:', err);
+        const rawErr = err?.message ? ` (${err.message})` : '';
+        const errMsg = `파일("${file.name}")을 읽는 중 오류가 발생했습니다. 암호가 걸려 있거나 손상된 파일인지, 표준 Excel(.xlsx/.xls/.csv) 파일이 맞는지 확인해 주세요.${rawErr}`;
+        setError(errMsg);
+        setAppNotice({
+          type: 'error',
+          title: type === 'phonebook' ? '전화번호부 파일 변환 오류' : '학습이력 파일 변환 오류',
+          message: errMsg,
+        });
+      } finally {
+        setLoading(false);
       }
     };
-    reader.readAsBinaryString(file);
+
+    reader.readAsArrayBuffer(file);
   };
 
   // Open file picker: Phonebook remembers previous folder, Matholic always opens in Downloads folder
   const handlePickFileWithPicker = async (type: 'phonebook' | 'message') => {
-    if ('showOpenFilePicker' in window) {
+    const inputRef = type === 'phonebook' ? phoneBookInputRef : messageInputRef;
+
+    let isInIframe = false;
+    try {
+      isInIframe = window.self !== window.top;
+    } catch {
+      isInIframe = true;
+    }
+
+    if (!isInIframe && 'showOpenFilePicker' in window) {
       const baseOpts: any = {
         types: [
           {
@@ -217,57 +314,72 @@ export default function App() {
       };
 
       try {
-        if (type === 'phonebook') {
-          // 전화번호부: 이전에 선택한 폴더 위치를 기억해서 열기
-          const savedHandle = await getSavedPickerHandle('phonebook');
-          const pickerOpts: any = {
-            ...baseOpts,
-            id: 'phonebook-excel-dir',
-            ...(savedHandle ? { startIn: savedHandle } : {}),
-          };
-
-          let fileHandle: any;
-          try {
-            [fileHandle] = await (window as any).showOpenFilePicker(pickerOpts);
-          } catch (innerErr: any) {
-            if (innerErr.name === 'AbortError') return;
-            if (savedHandle && innerErr.name !== 'SecurityError') {
-              [fileHandle] = await (window as any).showOpenFilePicker({
+        const pickerOpts: any =
+          type === 'phonebook'
+            ? {
                 ...baseOpts,
                 id: 'phonebook-excel-dir',
-              });
-            } else {
-              throw innerErr;
-            }
-          }
+                ...(savedPhonebookHandleRef.current ? { startIn: savedPhonebookHandleRef.current } : {}),
+              }
+            : {
+                ...baseOpts,
+                startIn: 'downloads',
+              };
 
-          await savePickerHandle('phonebook', fileHandle);
-          const file = await fileHandle.getFile();
-          handleFileLoad(file, type);
-          return;
-        } else {
-          // 매쓰홀릭 학습이력: 항상 다운로드(Downloads) 폴더에서 열기
-          const [fileHandle] = await (window as any).showOpenFilePicker({
-            ...baseOpts,
-            startIn: 'downloads',
-          });
-          const file = await fileHandle.getFile();
-          handleFileLoad(file, type);
-          return;
+        // Call showOpenFilePicker synchronously inside the click event to keep user gesture active
+        const pickerPromise = (window as any).showOpenFilePicker(pickerOpts);
+        let fileHandle: any;
+        try {
+          [fileHandle] = await pickerPromise;
+        } catch (innerErr: any) {
+          if (innerErr.name === 'AbortError') return;
+          if (
+            type === 'phonebook' &&
+            savedPhonebookHandleRef.current &&
+            innerErr.name !== 'SecurityError' &&
+            innerErr.name !== 'NotAllowedError'
+          ) {
+            savedPhonebookHandleRef.current = null;
+            [fileHandle] = await (window as any).showOpenFilePicker({
+              ...baseOpts,
+              id: 'phonebook-excel-dir',
+            });
+          } else {
+            throw innerErr;
+          }
         }
+
+        if (type === 'phonebook') {
+          savedPhonebookHandleRef.current = fileHandle;
+          await savePickerHandle('phonebook', fileHandle);
+        }
+
+        const file = await fileHandle.getFile();
+        handleFileLoad(file, type);
+        return;
       } catch (err: any) {
         if (err.name === 'AbortError') return; // 사용자가 창을 닫은 경우
         console.warn('showOpenFilePicker error, falling back to input click:', err);
       }
     }
 
-    // Fallback for browsers without File System Access API
-    const inputId = type === 'phonebook' ? 'phonebook-upload-input' : 'message-upload-input';
-    document.getElementById(inputId)?.click();
+    // Fallback for iframes or browsers without File System Access API
+    if (inputRef.current) {
+      inputRef.current.click();
+    } else {
+      setAppNotice({
+        type: 'error',
+        title: '파일 선택 창 오류',
+        message: '파일 선택 창을 열지 못했습니다. 파일을 아래 점선 영역으로 직접 드래그 앤 드롭해 주세요.',
+      });
+    }
   };
 
   // Demo / Sample Data injection
   const loadDemoData = () => {
+    setPhoneBookError(null);
+    setMessageError(null);
+    setAppNotice(null);
     // 1. Mock Phone Book data
     const mockPhoneBook = [
       { 아이디: 'std001', 이름: '강서준', 전화번호: '010-1234-5678' },
@@ -349,6 +461,9 @@ export default function App() {
     setMessageContentCol('');
 
     setConvertedRecords([]);
+    setPhoneBookError(null);
+    setMessageError(null);
+    setAppNotice(null);
   };
 
   // Main processing side effect: Triggered when settings, rows, or mapping changes
@@ -423,7 +538,11 @@ export default function App() {
     );
 
     if (sendableRecords.length === 0) {
-      alert('발송 가능한 상태인 수신자 데이터가 없습니다. 미리보기 테이블의 데이터를 확인해 주세요.');
+      setAppNotice({
+        type: 'warning',
+        title: '다운로드할 발송 대상 없음',
+        message: '발송 가능한 상태인 수신자 데이터가 없습니다. 미리보기 테이블의 오류/미분류 데이터를 확인해 주세요.',
+      });
       return;
     }
 
@@ -545,6 +664,41 @@ export default function App() {
 
       {/* Main Container */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-6 space-y-6">
+
+        {/* Global Error / Warning / Success Banner */}
+        {appNotice && (
+          <div
+            className={`rounded-2xl p-4 px-5 border shadow-lg flex items-start justify-between gap-4 backdrop-blur-md ${
+              appNotice.type === 'error'
+                ? 'bg-rose-950/60 border-rose-500/40 text-rose-100'
+                : appNotice.type === 'warning'
+                  ? 'bg-amber-950/60 border-amber-500/40 text-amber-100'
+                  : 'bg-emerald-950/60 border-emerald-500/40 text-emerald-100'
+            }`}
+          >
+            <div className="flex items-start gap-3">
+              {appNotice.type === 'error' ? (
+                <AlertCircle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
+              ) : appNotice.type === 'warning' ? (
+                <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+              ) : (
+                <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
+              )}
+              <div className="text-xs space-y-1">
+                <h4 className="font-bold text-sm">{appNotice.title}</h4>
+                <p className="leading-relaxed opacity-90">{appNotice.message}</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setAppNotice(null)}
+              className="p-1 rounded-lg hover:bg-white/10 transition-colors cursor-pointer shrink-0"
+              aria-label="알림 닫기"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
         
         {/* Help Panel Details */}
         {showHelp && (
@@ -629,6 +783,7 @@ export default function App() {
                 }`}
               >
                 <input
+                  ref={phoneBookInputRef}
                   type="file"
                   accept=".xlsx, .xls, .csv"
                   id="phonebook-upload-input"
@@ -636,22 +791,43 @@ export default function App() {
                   onChange={(e) => {
                     const files = e.target.files;
                     if (files && files.length > 0) handleFileLoad(files[0], 'phonebook');
+                    e.target.value = '';
                   }}
                 />
                 <div className="w-14 h-14 rounded-2xl bg-slate-900/60 flex items-center justify-center text-slate-400 mb-4 border border-slate-800">
-                  <Upload className="w-7 h-7" />
+                  {isLoadingPhoneBook ? (
+                    <Loader2 className="w-7 h-7 text-sky-400 animate-spin" />
+                  ) : (
+                    <Upload className="w-7 h-7" />
+                  )}
                 </div>
                 <h3 className="text-sm font-bold text-white">학생별 아이디 & 전화번호부 파일</h3>
                 <p className="text-xs text-slate-400 mt-1.5 max-w-[280px]">
                   학생의 식별키(아이디/이름 등)와 전화번호가 기록되어 있는 엑셀 파일을 올려주세요.
                 </p>
+                {phoneBookError && (
+                  <div className="mt-3 w-full max-w-sm bg-rose-950/60 border border-rose-500/40 rounded-xl px-3.5 py-2.5 text-left text-[11px] text-rose-200 flex items-start gap-2">
+                    <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                    <span className="leading-relaxed break-words">{phoneBookError}</span>
+                  </div>
+                )}
                 <button
                   type="button"
+                  disabled={isLoadingPhoneBook}
                   onClick={() => handlePickFileWithPicker('phonebook')}
-                  className="mt-5 px-5 py-2.5 bg-sky-600 hover:bg-sky-500 text-white rounded-lg text-xs font-semibold cursor-pointer transition-colors shadow-md flex items-center gap-1.5"
+                  className="mt-5 px-5 py-2.5 bg-sky-600 hover:bg-sky-500 disabled:opacity-60 text-white rounded-lg text-xs font-semibold cursor-pointer transition-colors shadow-md flex items-center gap-1.5"
                 >
-                  <Upload className="w-3.5 h-3.5" />
-                  전화번호부 파일 올리기
+                  {isLoadingPhoneBook ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      파일 읽는 중...
+                    </>
+                  ) : (
+                    <>
+                      <Upload className="w-3.5 h-3.5" />
+                      전화번호부 파일 올리기
+                    </>
+                  )}
                 </button>
                 <div className="text-[10px] text-slate-500 mt-2.5 flex items-center gap-1">
                   <span className="text-sky-400 font-semibold">📁 이전 폴더 위치 기억</span>
@@ -704,6 +880,7 @@ export default function App() {
                 }`}
               >
                 <input
+                  ref={messageInputRef}
                   type="file"
                   accept=".xlsx, .xls, .csv"
                   id="message-upload-input"
@@ -711,22 +888,43 @@ export default function App() {
                   onChange={(e) => {
                     const files = e.target.files;
                     if (files && files.length > 0) handleFileLoad(files[0], 'message');
+                    e.target.value = '';
                   }}
                 />
                 <div className="w-14 h-14 rounded-2xl bg-slate-900/60 flex items-center justify-center text-slate-400 mb-4 border border-slate-800">
-                  <Upload className="w-7 h-7" />
+                  {isLoadingMessage ? (
+                    <Loader2 className="w-7 h-7 text-sky-400 animate-spin" />
+                  ) : (
+                    <Upload className="w-7 h-7" />
+                  )}
                 </div>
                 <h3 className="text-sm font-bold text-white">매쓰홀릭 학습이력 파일</h3>
                 <p className="text-xs text-slate-400 mt-1.5 max-w-[280px]">
                   학생 식별키(아이디/이름)와 전송할 학습이력(3번째 시트)이 담긴 매쓰홀릭 엑셀 파일을 올려주세요.
                 </p>
+                {messageError && (
+                  <div className="mt-3 w-full max-w-sm bg-rose-950/60 border border-rose-500/40 rounded-xl px-3.5 py-2.5 text-left text-[11px] text-rose-200 flex items-start gap-2">
+                    <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                    <span className="leading-relaxed break-words">{messageError}</span>
+                  </div>
+                )}
                 <button
                   type="button"
+                  disabled={isLoadingMessage}
                   onClick={() => handlePickFileWithPicker('message')}
-                  className="mt-5 px-5 py-2.5 bg-sky-600 hover:bg-sky-500 text-white rounded-lg text-xs font-semibold cursor-pointer transition-colors shadow-md flex items-center gap-1.5"
+                  className="mt-5 px-5 py-2.5 bg-sky-600 hover:bg-sky-500 disabled:opacity-60 text-white rounded-lg text-xs font-semibold cursor-pointer transition-colors shadow-md flex items-center gap-1.5"
                 >
-                  <Upload className="w-3.5 h-3.5" />
-                  학습이력 파일 올리기
+                  {isLoadingMessage ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      파일 읽는 중...
+                    </>
+                  ) : (
+                    <>
+                      <Upload className="w-3.5 h-3.5" />
+                      학습이력 파일 올리기
+                    </>
+                  )}
                 </button>
                 <div className="text-[10px] text-slate-500 mt-2.5 flex items-center gap-1">
                   <span className="text-purple-400 font-semibold">📥 다운로드(Downloads) 폴더 열기</span>

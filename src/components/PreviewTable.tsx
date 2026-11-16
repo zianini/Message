@@ -83,6 +83,7 @@ export default function PreviewTable({
 
   // Batch course assignment
   const [selectedBatchCourse, setSelectedBatchCourse] = useState('');
+  const [batchNotice, setBatchNotice] = useState<{ type: 'error' | 'success'; text: string } | null>(null);
   
   // Course Process Guide modal state
   const [showCourseProcessModal, setShowCourseProcessModal] = useState(false);
@@ -236,7 +237,7 @@ export default function PreviewTable({
   // 과정명 미입력 건에 대해 일괄 지정 적용
   const handleApplyBatchCourse = () => {
     if (!selectedBatchCourse.trim()) {
-      alert('적용할 과정명을 선택해 주세요.');
+      setBatchNotice({ type: 'error', text: '적용할 과정명을 먼저 선택해 주세요.' });
       return;
     }
 
@@ -246,7 +247,10 @@ export default function PreviewTable({
       }
     });
 
-    alert(`과정명이 없던 레코드들에 '${selectedBatchCourse}' 과정명이 성공적으로 대입되었습니다.`);
+    setBatchNotice({
+      type: 'success',
+      text: `과정명이 없던 레코드들에 '${selectedBatchCourse}' 과정명이 대입되었습니다.`,
+    });
     setSelectedBatchCourse('');
   };
 
@@ -392,7 +396,10 @@ export default function PreviewTable({
           <div className="flex items-center gap-2 w-full md:w-auto">
             <select
               value={selectedBatchCourse}
-              onChange={(e) => setSelectedBatchCourse(e.target.value)}
+              onChange={(e) => {
+                setSelectedBatchCourse(e.target.value);
+                setBatchNotice(null);
+              }}
               className="bg-slate-900 border border-amber-500/40 text-amber-100 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:border-amber-400"
             >
               <option value="">-- 일괄 지정할 과정명 선택 --</option>
@@ -407,6 +414,26 @@ export default function PreviewTable({
               일괄 대입
             </button>
           </div>
+        </div>
+      )}
+
+      {batchNotice && (
+        <div
+          className={`border-b px-6 py-2.5 flex items-center justify-between gap-3 text-xs ${
+            batchNotice.type === 'error'
+              ? 'bg-rose-950/40 border-rose-500/30 text-rose-200'
+              : 'bg-emerald-950/40 border-emerald-500/30 text-emerald-200'
+          }`}
+        >
+          <span>{batchNotice.text}</span>
+          <button
+            type="button"
+            onClick={() => setBatchNotice(null)}
+            className="p-0.5 rounded hover:bg-white/10 cursor-pointer"
+            aria-label="닫기"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
         </div>
       )}
 
