@@ -25,10 +25,6 @@ import {
   convertAndFilterRecords, 
   calculateStats
 } from './utils/converter';
-import {
-  getSavedPickerHandle,
-  savePickerHandle
-} from './utils/folderMemory';
 
 import Dashboard from './components/Dashboard';
 import SettingsPanel from './components/SettingsPanel';
@@ -125,21 +121,23 @@ export default function App() {
   const [phoneBookError, setPhoneBookError] = useState<string | null>(null);
   const [messageError, setMessageError] = useState<string | null>(null);
   const [appNotice, setAppNotice] = useState<{
-    type: 'error' | 'warning' | 'success';
+    type: 'error' | 'warning' | 'info' | 'success';
     title: string;
     message: string;
   } | null>(null);
 
-  // Refs for synchronous file input fallback & preloaded FileSystemFileHandle
+  // Refs for file inputs
   const phoneBookInputRef = useRef<HTMLInputElement | null>(null);
   const messageInputRef = useRef<HTMLInputElement | null>(null);
-  const savedPhonebookHandleRef = useRef<any>(null);
 
-  useEffect(() => {
-    getSavedPickerHandle('phonebook').then((handle) => {
-      savedPhonebookHandleRef.current = handle;
-    });
-  }, []);
+  // Detect iframe or unsupported File System Access API -> use native <label htmlFor> directly
+  const [pickerUnavailable, setPickerUnavailable] = useState<boolean>(() => {
+    try {
+      return window.self !== window.top || !('showOpenFilePicker' in window);
+    } catch {
+      return true;
+    }
+  });
 
   // Auto-map columns when headers are parsed
   const autoMapHeaders = (headers: string[], type: 'phonebook' | 'message') => {
@@ -148,11 +146,11 @@ export default function App() {
       const idMatch = headers.find(h => h.trim() === '아이디') || 
                       headers.find(h => h.toLowerCase().includes('아이디')) || 
                       headers.find(h => h.toLowerCase().includes('id')) ||
-                      headers.find(h => ['학번', '학생', '학생명', 'name'].some(c => h.toLowerCase().includes(c)));
+                      headers.find(h => ['학번', '학생', '학생명', '이름', 'name'].some(c => h.toLowerCase().includes(c)));
       if (idMatch) setPhoneBookIdCol(idMatch);
 
       // Find Phone number column
-      const phoneCandidates = ['전화', '번호', '연락처', '휴대폰', '핸드폰', '폰', 'phone', 'contact', 'tel', 'mobile'];
+      const phoneCandidates = ['전화', '연락', '번호', '휴대', '핸드', '모바일', '폰', '학부모', 'hp', 'h.p', 'phone', 'contact', 'tel', 'mobile'];
       const phoneMatch = headers.find(h => phoneCandidates.some(c => h.toLowerCase().includes(c)));
       if (phoneMatch) setPhoneBookPhoneCol(phoneMatch);
     } else {
@@ -160,7 +158,7 @@ export default function App() {
       const idMatch = headers.find(h => h.trim() === '아이디') || 
                       headers.find(h => h.toLowerCase().includes('아이디')) || 
                       headers.find(h => h.toLowerCase().includes('id')) ||
-                      headers.find(h => ['학번', '학생명', '학생', '수신', 'name'].some(c => h.toLowerCase().includes(c)));
+                      headers.find(h => ['학번', '학생명', '학생', '수신', '이름', 'name'].some(c => h.toLowerCase().includes(c)));
       if (idMatch) setMessageIdCol(idMatch);
 
       // Find Message Content column
@@ -170,7 +168,7 @@ export default function App() {
     }
   };
 
-  // Excel file loader handler
+  // Excel / CSV file loader handler
   const handleFileLoad = (file: File, type: 'phonebook' | 'message') => {
     const setLoading = type === 'phonebook' ? setIsLoadingPhoneBook : setIsLoadingMessage;
     const setError = type === 'phonebook' ? setPhoneBookError : setMessageError;
@@ -182,7 +180,7 @@ export default function App() {
     const reader = new FileReader();
 
     reader.onerror = () => {
-      const msg = `파일("${file.name}")을 읽는 중 브라우저 오류가 발생했습니다. 파일이 다른 프로그램에서 잠겨 있거나 접근 권한이 없는지 확인해 주세요.`;
+      const msg = `파일("${file.name}")을 읽는 중 브라우저 오류가 발생했습니다. 파일이 다른 프로그램(Excel 등)에서 열려 잠겨 있거나 접근 권한이 없는지 확인해 주세요.`;
       setError(msg);
       setAppNotice({
         type: 'error',
@@ -205,14 +203,49 @@ export default function App() {
           throw new Error('파일 내용이 비어 있어 읽을 수 없습니다.');
         }
 
-        const workbook = XLSX.read(new Uint8Array(data as ArrayBuffer), { type: 'array' });
+        const bytes = new Uint8Array(data as ArrayBuffer);
+        const isCsv = /\.csv$/i.test(file.name);
+        let workbook: XLSX.WorkBook;
+
+        if (isCsv) {
+          let csvText = new TextDecoder('utf-8').decode(bytes);
+          if (csvText.includes('\uFFFD')) {
+            csvText = new TextDecoder('euc-kr').decode(bytes);
+          }
+          workbook = XLSX.read(csvText, { type: 'string' });
+        } else {
+          workbook = XLSX.read(bytes, { type: 'array' });
+        }
 
         if (!workbook.SheetNames || workbook.SheetNames.length === 0) {
           throw new Error('엑셀 파일에 시트(Sheet)가 존재하지 않습니다.');
         }
 
-        // 1. 매쓰홀릭 학습이력 파일은 3번째 시트 우선 사용
+        // Helper: parse sheet and automatically detect shifted header row (e.g. if row 1 is a title banner)
+        const parseSheetRows = (sheet: XLSX.WorkSheet): any[] => {
+          const directJson: any[] = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+          if (directJson.length === 0) return [];
+
+          const firstKeys = Object.keys(directJson[0] || {});
+          const emptyKeyCount = firstKeys.filter((k) => k.startsWith('__EMPTY')).length;
+          if (emptyKeyCount >= Math.max(1, Math.floor(firstKeys.length / 2))) {
+            const matrix: any[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+            const headerHintRegex = /(아이디|id|학번|이름|학생|전화|연락처|번호|휴대|핸드|학습명|학습유형|점수)/i;
+            for (let r = 0; r < Math.min(10, matrix.length); r++) {
+              const rowCells = (matrix[r] || []).map((c) => String(c ?? '').trim());
+              const matchCount = rowCells.filter((c) => headerHintRegex.test(c)).length;
+              if (matchCount >= 2) {
+                const shiftedJson: any[] = XLSX.utils.sheet_to_json(sheet, { range: r, defval: '' });
+                if (shiftedJson.length > 0) return shiftedJson;
+              }
+            }
+          }
+          return directJson;
+        };
+
         let sheetName = workbook.SheetNames[0];
+        let json: any[] = [];
+
         if (type === 'message') {
           if (workbook.SheetNames.length >= 3) {
             sheetName = workbook.SheetNames[2];
@@ -223,15 +256,22 @@ export default function App() {
               message: `매쓰홀릭 학습이력 파일은 보통 3번째 시트에 데이터가 있습니다. 현재 파일("${file.name}")에는 ${workbook.SheetNames.length}개의 시트만 존재하여 첫 번째 시트("${sheetName}")를 불러옵니다.`,
             });
           }
+          const sheet = workbook.Sheets[sheetName];
+          if (!sheet) throw new Error(`시트("${sheetName}")를 불러올 수 없습니다.`);
+          json = parseSheetRows(sheet);
+        } else {
+          // Phonebook: try first sheet, if empty automatically check remaining sheets
+          for (const candidateName of workbook.SheetNames) {
+            const candidateSheet = workbook.Sheets[candidateName];
+            if (!candidateSheet) continue;
+            const parsed = parseSheetRows(candidateSheet);
+            if (parsed.length > 0) {
+              sheetName = candidateName;
+              json = parsed;
+              break;
+            }
+          }
         }
-
-        const sheet = workbook.Sheets[sheetName];
-        if (!sheet) {
-          throw new Error(`시트("${sheetName}")를 불러올 수 없습니다.`);
-        }
-
-        // Convert sheet data to JSON containing all columns
-        const json: any[] = XLSX.utils.sheet_to_json(sheet, { defval: '' });
 
         if (json.length === 0) {
           const emptyMsg = `선택한 시트("${sheetName}")에 데이터가 비어 있습니다. (파일 내 시트 목록: ${workbook.SheetNames.join(', ')})`;
@@ -244,7 +284,6 @@ export default function App() {
           return;
         }
 
-        // Extract headers from first non-empty row keys
         const headers = Object.keys(json[0] || {});
         if (headers.length === 0) {
           const headerMsg = `시트("${sheetName}")에서 열 제목(헤더)을 찾을 수 없습니다.`;
@@ -286,19 +325,13 @@ export default function App() {
     reader.readAsArrayBuffer(file);
   };
 
-  // Open file picker: Phonebook remembers previous folder, Matholic always opens in Downloads folder
+  // Open file picker: Phonebook remembers previous folder via id, Matholic opens Downloads folder
   const handlePickFileWithPicker = async (type: 'phonebook' | 'message') => {
     const inputRef = type === 'phonebook' ? phoneBookInputRef : messageInputRef;
 
-    let isInIframe = false;
-    try {
-      isInIframe = window.self !== window.top;
-    } catch {
-      isInIframe = true;
-    }
-
-    if (!isInIframe && 'showOpenFilePicker' in window) {
-      const baseOpts: any = {
+    if (!pickerUnavailable && 'showOpenFilePicker' in window) {
+      const pickerOpts: any = {
+        ...(type === 'phonebook' ? { id: 'phonebook-excel-dir' } : { startIn: 'downloads' }),
         types: [
           {
             description: 'Excel & CSV Files',
@@ -314,65 +347,30 @@ export default function App() {
       };
 
       try {
-        const pickerOpts: any =
-          type === 'phonebook'
-            ? {
-                ...baseOpts,
-                id: 'phonebook-excel-dir',
-                ...(savedPhonebookHandleRef.current ? { startIn: savedPhonebookHandleRef.current } : {}),
-              }
-            : {
-                ...baseOpts,
-                startIn: 'downloads',
-              };
-
-        // Call showOpenFilePicker synchronously inside the click event to keep user gesture active
-        const pickerPromise = (window as any).showOpenFilePicker(pickerOpts);
-        let fileHandle: any;
-        try {
-          [fileHandle] = await pickerPromise;
-        } catch (innerErr: any) {
-          if (innerErr.name === 'AbortError') return;
-          if (
-            type === 'phonebook' &&
-            savedPhonebookHandleRef.current &&
-            innerErr.name !== 'SecurityError' &&
-            innerErr.name !== 'NotAllowedError'
-          ) {
-            savedPhonebookHandleRef.current = null;
-            [fileHandle] = await (window as any).showOpenFilePicker({
-              ...baseOpts,
-              id: 'phonebook-excel-dir',
-            });
-          } else {
-            throw innerErr;
-          }
-        }
-
-        if (type === 'phonebook') {
-          savedPhonebookHandleRef.current = fileHandle;
-          await savePickerHandle('phonebook', fileHandle);
-        }
-
+        const [fileHandle] = await (window as any).showOpenFilePicker(pickerOpts);
         const file = await fileHandle.getFile();
         handleFileLoad(file, type);
         return;
       } catch (err: any) {
-        if (err.name === 'AbortError') return; // 사용자가 창을 닫은 경우
-        console.warn('showOpenFilePicker error, falling back to input click:', err);
+        if (err?.name === 'AbortError') return; // 사용자가 창을 닫은 경우
+        console.warn('showOpenFilePicker failed, switching to native input:', err);
+        setPickerUnavailable(true);
+        // Try synchronous fallback, and if browser blocks it after await, guide user to click once more
+        try {
+          inputRef.current?.click();
+        } catch {
+          // ignore
+        }
+        setAppNotice({
+          type: 'info',
+          title: '기본 파일 선택 모드로 전환되었습니다',
+          message: '브라우저 보안 정책으로 폴더 기억 탐색기가 차단되어 기본 파일 선택 방식으로 전환했습니다. 창이 열리지 않았다면 업로드 버튼을 한 번 더 눌러주세요.',
+        });
+        return;
       }
     }
 
-    // Fallback for iframes or browsers without File System Access API
-    if (inputRef.current) {
-      inputRef.current.click();
-    } else {
-      setAppNotice({
-        type: 'error',
-        title: '파일 선택 창 오류',
-        message: '파일 선택 창을 열지 못했습니다. 파일을 아래 점선 영역으로 직접 드래그 앤 드롭해 주세요.',
-      });
-    }
+    inputRef.current?.click();
   };
 
   // Demo / Sample Data injection
@@ -581,6 +579,7 @@ export default function App() {
   // Drag & Drop Handlers
   const onDragOver = (e: React.DragEvent, type: 'phone' | 'msg') => {
     e.preventDefault();
+    e.stopPropagation();
     if (type === 'phone') setDragOverPhoneBook(true);
     else setDragOverMessage(true);
   };
@@ -592,6 +591,7 @@ export default function App() {
 
   const onDrop = (e: React.DragEvent, type: 'phone' | 'msg') => {
     e.preventDefault();
+    e.stopPropagation();
     if (type === 'phone') {
       setDragOverPhoneBook(false);
       const files = e.dataTransfer.files;
@@ -665,7 +665,7 @@ export default function App() {
       {/* Main Container */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-6 space-y-6">
 
-        {/* Global Error / Warning / Success Banner */}
+        {/* Global Error / Warning / Info / Success Banner */}
         {appNotice && (
           <div
             className={`rounded-2xl p-4 px-5 border shadow-lg flex items-start justify-between gap-4 backdrop-blur-md ${
@@ -673,7 +673,9 @@ export default function App() {
                 ? 'bg-rose-950/60 border-rose-500/40 text-rose-100'
                 : appNotice.type === 'warning'
                   ? 'bg-amber-950/60 border-amber-500/40 text-amber-100'
-                  : 'bg-emerald-950/60 border-emerald-500/40 text-emerald-100'
+                  : appNotice.type === 'info'
+                    ? 'bg-sky-950/60 border-sky-500/40 text-sky-100'
+                    : 'bg-emerald-950/60 border-emerald-500/40 text-emerald-100'
             }`}
           >
             <div className="flex items-start gap-3">
@@ -681,6 +683,8 @@ export default function App() {
                 <AlertCircle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
               ) : appNotice.type === 'warning' ? (
                 <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+              ) : appNotice.type === 'info' ? (
+                <AlertCircle className="w-5 h-5 text-sky-400 shrink-0 mt-0.5" />
               ) : (
                 <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
               )}
@@ -811,24 +815,53 @@ export default function App() {
                     <span className="leading-relaxed break-words">{phoneBookError}</span>
                   </div>
                 )}
-                <button
-                  type="button"
-                  disabled={isLoadingPhoneBook}
-                  onClick={() => handlePickFileWithPicker('phonebook')}
-                  className="mt-5 px-5 py-2.5 bg-sky-600 hover:bg-sky-500 disabled:opacity-60 text-white rounded-lg text-xs font-semibold cursor-pointer transition-colors shadow-md flex items-center gap-1.5"
-                >
-                  {isLoadingPhoneBook ? (
-                    <>
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      파일 읽는 중...
-                    </>
-                  ) : (
-                    <>
-                      <Upload className="w-3.5 h-3.5" />
-                      전화번호부 파일 올리기
-                    </>
-                  )}
-                </button>
+                {pickerUnavailable ? (
+                  <label
+                    htmlFor="phonebook-upload-input"
+                    className={`mt-5 px-5 py-2.5 bg-sky-600 hover:bg-sky-500 text-white rounded-lg text-xs font-semibold cursor-pointer transition-colors shadow-md flex items-center gap-1.5 ${
+                      isLoadingPhoneBook ? 'opacity-60 pointer-events-none' : ''
+                    }`}
+                  >
+                    {isLoadingPhoneBook ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        파일 읽는 중...
+                      </>
+                    ) : (
+                      <>
+                        <Upload className="w-3.5 h-3.5" />
+                        전화번호부 파일 올리기
+                      </>
+                    )}
+                  </label>
+                ) : (
+                  <div className="mt-5 flex flex-col items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={isLoadingPhoneBook}
+                      onClick={() => handlePickFileWithPicker('phonebook')}
+                      className="px-5 py-2.5 bg-sky-600 hover:bg-sky-500 disabled:opacity-60 text-white rounded-lg text-xs font-semibold cursor-pointer transition-colors shadow-md flex items-center gap-1.5"
+                    >
+                      {isLoadingPhoneBook ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          파일 읽는 중...
+                        </>
+                      ) : (
+                        <>
+                          <Upload className="w-3.5 h-3.5" />
+                          전화번호부 파일 올리기
+                        </>
+                      )}
+                    </button>
+                    <label
+                      htmlFor="phonebook-upload-input"
+                      className="text-[11px] text-slate-400 hover:text-sky-300 underline underline-offset-2 cursor-pointer"
+                    >
+                      기본 파일 선택창으로 바로 열기
+                    </label>
+                  </div>
+                )}
                 <div className="text-[10px] text-slate-500 mt-2.5 flex items-center gap-1">
                   <span className="text-sky-400 font-semibold">📁 이전 폴더 위치 기억</span>
                   <span>• Excel / CSV 지원</span>
@@ -908,24 +941,53 @@ export default function App() {
                     <span className="leading-relaxed break-words">{messageError}</span>
                   </div>
                 )}
-                <button
-                  type="button"
-                  disabled={isLoadingMessage}
-                  onClick={() => handlePickFileWithPicker('message')}
-                  className="mt-5 px-5 py-2.5 bg-sky-600 hover:bg-sky-500 disabled:opacity-60 text-white rounded-lg text-xs font-semibold cursor-pointer transition-colors shadow-md flex items-center gap-1.5"
-                >
-                  {isLoadingMessage ? (
-                    <>
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      파일 읽는 중...
-                    </>
-                  ) : (
-                    <>
-                      <Upload className="w-3.5 h-3.5" />
-                      학습이력 파일 올리기
-                    </>
-                  )}
-                </button>
+                {pickerUnavailable ? (
+                  <label
+                    htmlFor="message-upload-input"
+                    className={`mt-5 px-5 py-2.5 bg-sky-600 hover:bg-sky-500 text-white rounded-lg text-xs font-semibold cursor-pointer transition-colors shadow-md flex items-center gap-1.5 ${
+                      isLoadingMessage ? 'opacity-60 pointer-events-none' : ''
+                    }`}
+                  >
+                    {isLoadingMessage ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        파일 읽는 중...
+                      </>
+                    ) : (
+                      <>
+                        <Upload className="w-3.5 h-3.5" />
+                        학습이력 파일 올리기
+                      </>
+                    )}
+                  </label>
+                ) : (
+                  <div className="mt-5 flex flex-col items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={isLoadingMessage}
+                      onClick={() => handlePickFileWithPicker('message')}
+                      className="px-5 py-2.5 bg-sky-600 hover:bg-sky-500 disabled:opacity-60 text-white rounded-lg text-xs font-semibold cursor-pointer transition-colors shadow-md flex items-center gap-1.5"
+                    >
+                      {isLoadingMessage ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          파일 읽는 중...
+                        </>
+                      ) : (
+                        <>
+                          <Upload className="w-3.5 h-3.5" />
+                          학습이력 파일 올리기
+                        </>
+                      )}
+                    </button>
+                    <label
+                      htmlFor="message-upload-input"
+                      className="text-[11px] text-slate-400 hover:text-sky-300 underline underline-offset-2 cursor-pointer"
+                    >
+                      기본 파일 선택창으로 바로 열기
+                    </label>
+                  </div>
+                )}
                 <div className="text-[10px] text-slate-500 mt-2.5 flex items-center gap-1">
                   <span className="text-purple-400 font-semibold">📥 다운로드(Downloads) 폴더 열기</span>
                   <span>• 3번째 시트 자동 인식</span>
