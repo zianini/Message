@@ -835,32 +835,24 @@ export default function App() {
                     )}
                   </label>
                 ) : (
-                  <div className="mt-5 flex flex-col items-center gap-2">
-                    <button
-                      type="button"
-                      disabled={isLoadingPhoneBook}
-                      onClick={() => handlePickFileWithPicker('phonebook')}
-                      className="px-5 py-2.5 bg-sky-600 hover:bg-sky-500 disabled:opacity-60 text-white rounded-lg text-xs font-semibold cursor-pointer transition-colors shadow-md flex items-center gap-1.5"
-                    >
-                      {isLoadingPhoneBook ? (
-                        <>
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          파일 읽는 중...
-                        </>
-                      ) : (
-                        <>
-                          <Upload className="w-3.5 h-3.5" />
-                          전화번호부 파일 올리기
-                        </>
-                      )}
-                    </button>
-                    <label
-                      htmlFor="phonebook-upload-input"
-                      className="text-[11px] text-slate-400 hover:text-sky-300 underline underline-offset-2 cursor-pointer"
-                    >
-                      기본 파일 선택창으로 바로 열기
-                    </label>
-                  </div>
+                  <button
+                    type="button"
+                    disabled={isLoadingPhoneBook}
+                    onClick={() => handlePickFileWithPicker('phonebook')}
+                    className="mt-5 px-5 py-2.5 bg-sky-600 hover:bg-sky-500 disabled:opacity-60 text-white rounded-lg text-xs font-semibold cursor-pointer transition-colors shadow-md flex items-center gap-1.5"
+                  >
+                    {isLoadingPhoneBook ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        파일 읽는 중...
+                      </>
+                    ) : (
+                      <>
+                        <Upload className="w-3.5 h-3.5" />
+                        전화번호부 파일 올리기
+                      </>
+                    )}
+                  </button>
                 )}
                 <div className="text-[10px] text-slate-500 mt-2.5 flex items-center gap-1">
                   <span className="text-sky-400 font-semibold">📁 이전 폴더 위치 기억</span>
@@ -961,32 +953,24 @@ export default function App() {
                     )}
                   </label>
                 ) : (
-                  <div className="mt-5 flex flex-col items-center gap-2">
-                    <button
-                      type="button"
-                      disabled={isLoadingMessage}
-                      onClick={() => handlePickFileWithPicker('message')}
-                      className="px-5 py-2.5 bg-sky-600 hover:bg-sky-500 disabled:opacity-60 text-white rounded-lg text-xs font-semibold cursor-pointer transition-colors shadow-md flex items-center gap-1.5"
-                    >
-                      {isLoadingMessage ? (
-                        <>
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          파일 읽는 중...
-                        </>
-                      ) : (
-                        <>
-                          <Upload className="w-3.5 h-3.5" />
-                          학습이력 파일 올리기
-                        </>
-                      )}
-                    </button>
-                    <label
-                      htmlFor="message-upload-input"
-                      className="text-[11px] text-slate-400 hover:text-sky-300 underline underline-offset-2 cursor-pointer"
-                    >
-                      기본 파일 선택창으로 바로 열기
-                    </label>
-                  </div>
+                  <button
+                    type="button"
+                    disabled={isLoadingMessage}
+                    onClick={() => handlePickFileWithPicker('message')}
+                    className="mt-5 px-5 py-2.5 bg-sky-600 hover:bg-sky-500 disabled:opacity-60 text-white rounded-lg text-xs font-semibold cursor-pointer transition-colors shadow-md flex items-center gap-1.5"
+                  >
+                    {isLoadingMessage ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        파일 읽는 중...
+                      </>
+                    ) : (
+                      <>
+                        <Upload className="w-3.5 h-3.5" />
+                        학습이력 파일 올리기
+                      </>
+                    )}
+                  </button>
                 )}
                 <div className="text-[10px] text-slate-500 mt-2.5 flex items-center gap-1">
                   <span className="text-purple-400 font-semibold">📥 다운로드(Downloads) 폴더 열기</span>
