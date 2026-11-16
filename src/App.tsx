@@ -120,6 +120,8 @@ export default function App() {
   const [isLoadingMessage, setIsLoadingMessage] = useState(false);
   const [phoneBookError, setPhoneBookError] = useState<string | null>(null);
   const [messageError, setMessageError] = useState<string | null>(null);
+  const [phoneBookPickerNotice, setPhoneBookPickerNotice] = useState<string | null>(null);
+  const [messagePickerNotice, setMessagePickerNotice] = useState<string | null>(null);
   const [appNotice, setAppNotice] = useState<{
     type: 'error' | 'warning' | 'info' | 'success';
     title: string;
@@ -139,6 +141,43 @@ export default function App() {
       return true;
     }
   });
+
+  const switchToNativePicker = () => {
+    try {
+      localStorage.setItem('aligo_picker_unavailable', '1');
+    } catch {
+      // ignore storage errors
+    }
+    setPickerUnavailable(true);
+    setPhoneBookPickerNotice(null);
+    setMessagePickerNotice(null);
+    setPhoneBookError(null);
+    setMessageError(null);
+    setAppNotice({
+      type: 'info',
+      title: '기본 파일 선택 모드로 전환됨',
+      message: '이제 업로드 버튼을 누르면 브라우저 기본 파일 선택창이 바로 열립니다. (드래그 앤 드롭도 계속 사용 가능합니다)',
+    });
+  };
+
+  const tryEnableFolderPicker = () => {
+    if (!('showOpenFilePicker' in window)) {
+      setAppNotice({
+        type: 'warning',
+        title: '폴더 기억 기능 미지원 브라우저',
+        message: '현재 브라우저는 폴더 지정 API(showOpenFilePicker)를 지원하지 않아 기본 파일 선택 모드만 사용할 수 있습니다.',
+      });
+      return;
+    }
+    try {
+      localStorage.removeItem('aligo_picker_unavailable');
+    } catch {
+      // ignore storage errors
+    }
+    setPickerUnavailable(false);
+    setPhoneBookPickerNotice(null);
+    setMessagePickerNotice(null);
+  };
 
   // Auto-map columns when headers are parsed
   const autoMapHeaders = (headers: string[], type: 'phonebook' | 'message') => {
@@ -169,168 +208,157 @@ export default function App() {
     }
   };
 
-  // Excel / CSV file loader handler
-  const handleFileLoad = (file: File, type: 'phonebook' | 'message') => {
+  // Excel / CSV file loader handler (uses modern Promise file.arrayBuffer())
+  const handleFileLoad = async (file: File, type: 'phonebook' | 'message') => {
     const setLoading = type === 'phonebook' ? setIsLoadingPhoneBook : setIsLoadingMessage;
     const setError = type === 'phonebook' ? setPhoneBookError : setMessageError;
+    const setPickerNotice = type === 'phonebook' ? setPhoneBookPickerNotice : setMessagePickerNotice;
 
     setError(null);
+    setPickerNotice(null);
     setAppNotice(null);
     setLoading(true);
 
-    const reader = new FileReader();
+    try {
+      if (!file) {
+        throw new Error('전달된 파일 객체가 비어 있습니다.');
+      }
+      if (file.size === 0) {
+        throw new Error('파일 크기가 0바이트입니다. 내용이 저장된 올바른 파일인지 확인해 주세요.');
+      }
 
-    reader.onerror = () => {
-      const msg = `파일("${file.name}")을 읽는 중 브라우저 오류가 발생했습니다. 파일이 다른 프로그램(Excel 등)에서 열려 잠겨 있거나 접근 권한이 없는지 확인해 주세요.`;
-      setError(msg);
-      setAppNotice({
-        type: 'error',
-        title: type === 'phonebook' ? '전화번호부 파일 읽기 실패' : '학습이력 파일 읽기 실패',
-        message: msg,
-      });
-      setLoading(false);
-    };
+      const data = await file.arrayBuffer();
+      if (!data || data.byteLength === 0) {
+        throw new Error('파일 내용이 비어 있어 읽을 수 없습니다.');
+      }
 
-    reader.onabort = () => {
-      const msg = `파일("${file.name}") 읽기가 중단되었습니다. 다시 시도해 주세요.`;
-      setError(msg);
-      setLoading(false);
-    };
+      const bytes = new Uint8Array(data);
+      const isCsv = /\.csv$/i.test(file.name);
+      let workbook: XLSX.WorkBook;
 
-    reader.onload = (e) => {
-      try {
-        const data = e.target?.result;
-        if (!data) {
-          throw new Error('파일 내용이 비어 있어 읽을 수 없습니다.');
+      if (isCsv) {
+        let csvText = new TextDecoder('utf-8').decode(bytes);
+        if (csvText.includes('\uFFFD')) {
+          csvText = new TextDecoder('euc-kr').decode(bytes);
         }
+        workbook = XLSX.read(csvText, { type: 'string' });
+      } else {
+        workbook = XLSX.read(bytes, { type: 'array' });
+      }
 
-        const bytes = new Uint8Array(data as ArrayBuffer);
-        const isCsv = /\.csv$/i.test(file.name);
-        let workbook: XLSX.WorkBook;
+      if (!workbook.SheetNames || workbook.SheetNames.length === 0) {
+        throw new Error('엑셀 파일에 시트(Sheet)가 존재하지 않습니다.');
+      }
 
-        if (isCsv) {
-          let csvText = new TextDecoder('utf-8').decode(bytes);
-          if (csvText.includes('\uFFFD')) {
-            csvText = new TextDecoder('euc-kr').decode(bytes);
-          }
-          workbook = XLSX.read(csvText, { type: 'string' });
-        } else {
-          workbook = XLSX.read(bytes, { type: 'array' });
-        }
+      // Helper: parse sheet and automatically detect shifted header row (e.g. if row 1 is a title banner)
+      const parseSheetRows = (sheet: XLSX.WorkSheet): any[] => {
+        const directJson: any[] = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+        if (directJson.length === 0) return [];
 
-        if (!workbook.SheetNames || workbook.SheetNames.length === 0) {
-          throw new Error('엑셀 파일에 시트(Sheet)가 존재하지 않습니다.');
-        }
-
-        // Helper: parse sheet and automatically detect shifted header row (e.g. if row 1 is a title banner)
-        const parseSheetRows = (sheet: XLSX.WorkSheet): any[] => {
-          const directJson: any[] = XLSX.utils.sheet_to_json(sheet, { defval: '' });
-          if (directJson.length === 0) return [];
-
-          const firstKeys = Object.keys(directJson[0] || {});
-          const emptyKeyCount = firstKeys.filter((k) => k.startsWith('__EMPTY')).length;
-          if (emptyKeyCount >= Math.max(1, Math.floor(firstKeys.length / 2))) {
-            const matrix: any[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
-            const headerHintRegex = /(아이디|id|학번|이름|학생|전화|연락처|번호|휴대|핸드|학습명|학습유형|점수)/i;
-            for (let r = 0; r < Math.min(10, matrix.length); r++) {
-              const rowCells = (matrix[r] || []).map((c) => String(c ?? '').trim());
-              const matchCount = rowCells.filter((c) => headerHintRegex.test(c)).length;
-              if (matchCount >= 2) {
-                const shiftedJson: any[] = XLSX.utils.sheet_to_json(sheet, { range: r, defval: '' });
-                if (shiftedJson.length > 0) return shiftedJson;
-              }
-            }
-          }
-          return directJson;
-        };
-
-        let sheetName = workbook.SheetNames[0];
-        let json: any[] = [];
-
-        if (type === 'message') {
-          if (workbook.SheetNames.length >= 3) {
-            sheetName = workbook.SheetNames[2];
-          } else {
-            setAppNotice({
-              type: 'warning',
-              title: '시트 개수 확인 안내',
-              message: `매쓰홀릭 학습이력 파일은 보통 3번째 시트에 데이터가 있습니다. 현재 파일("${file.name}")에는 ${workbook.SheetNames.length}개의 시트만 존재하여 첫 번째 시트("${sheetName}")를 불러옵니다.`,
-            });
-          }
-          const sheet = workbook.Sheets[sheetName];
-          if (!sheet) throw new Error(`시트("${sheetName}")를 불러올 수 없습니다.`);
-          json = parseSheetRows(sheet);
-        } else {
-          // Phonebook: try first sheet, if empty automatically check remaining sheets
-          for (const candidateName of workbook.SheetNames) {
-            const candidateSheet = workbook.Sheets[candidateName];
-            if (!candidateSheet) continue;
-            const parsed = parseSheetRows(candidateSheet);
-            if (parsed.length > 0) {
-              sheetName = candidateName;
-              json = parsed;
-              break;
+        const firstKeys = Object.keys(directJson[0] || {});
+        const emptyKeyCount = firstKeys.filter((k) => k.startsWith('__EMPTY')).length;
+        if (emptyKeyCount >= Math.max(1, Math.floor(firstKeys.length / 2))) {
+          const matrix: any[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+          const headerHintRegex = /(아이디|id|학번|이름|학생|전화|연락처|번호|휴대|핸드|학습명|학습유형|점수)/i;
+          for (let r = 0; r < Math.min(10, matrix.length); r++) {
+            const rowCells = (matrix[r] || []).map((c) => String(c ?? '').trim());
+            const matchCount = rowCells.filter((c) => headerHintRegex.test(c)).length;
+            if (matchCount >= 2) {
+              const shiftedJson: any[] = XLSX.utils.sheet_to_json(sheet, { range: r, defval: '' });
+              if (shiftedJson.length > 0) return shiftedJson;
             }
           }
         }
+        return directJson;
+      };
 
-        if (json.length === 0) {
-          const emptyMsg = `선택한 시트("${sheetName}")에 데이터가 비어 있습니다. (파일 내 시트 목록: ${workbook.SheetNames.join(', ')})`;
-          setError(emptyMsg);
-          setAppNotice({
-            type: 'error',
-            title: type === 'phonebook' ? '전화번호부 데이터 없음' : '학습이력 데이터 없음',
-            message: emptyMsg,
-          });
-          return;
-        }
+      let sheetName = workbook.SheetNames[0];
+      let json: any[] = [];
 
-        const headers = Object.keys(json[0] || {});
-        if (headers.length === 0) {
-          const headerMsg = `시트("${sheetName}")에서 열 제목(헤더)을 찾을 수 없습니다.`;
-          setError(headerMsg);
-          setAppNotice({
-            type: 'error',
-            title: '열 제목 인식 실패',
-            message: headerMsg,
-          });
-          return;
-        }
-
-        if (type === 'phonebook') {
-          setPhoneBookFile(file);
-          setPhoneBookRows(json);
-          setPhoneBookHeaders(headers);
-          autoMapHeaders(headers, 'phonebook');
+      if (type === 'message') {
+        if (workbook.SheetNames.length >= 3) {
+          sheetName = workbook.SheetNames[2];
         } else {
-          setMessageFile(file);
-          setMessageRows(json);
-          setMessageHeaders(headers);
-          autoMapHeaders(headers, 'message');
+          setAppNotice({
+            type: 'warning',
+            title: '시트 개수 확인 안내',
+            message: `매쓰홀릭 학습이력 파일은 보통 3번째 시트에 데이터가 있습니다. 현재 파일("${file.name}")에는 ${workbook.SheetNames.length}개의 시트만 존재하여 첫 번째 시트("${sheetName}")를 불러옵니다.`,
+          });
         }
-      } catch (err: any) {
-        console.error('Excel parse error:', err);
-        const rawErr = err?.message ? ` (${err.message})` : '';
-        const errMsg = `파일("${file.name}")을 읽는 중 오류가 발생했습니다. 암호가 걸려 있거나 손상된 파일인지, 표준 Excel(.xlsx/.xls/.csv) 파일이 맞는지 확인해 주세요.${rawErr}`;
-        setError(errMsg);
+        const sheet = workbook.Sheets[sheetName];
+        if (!sheet) throw new Error(`시트("${sheetName}")를 불러올 수 없습니다.`);
+        json = parseSheetRows(sheet);
+      } else {
+        // Phonebook: try first sheet, if empty automatically check remaining sheets
+        for (const candidateName of workbook.SheetNames) {
+          const candidateSheet = workbook.Sheets[candidateName];
+          if (!candidateSheet) continue;
+          const parsed = parseSheetRows(candidateSheet);
+          if (parsed.length > 0) {
+            sheetName = candidateName;
+            json = parsed;
+            break;
+          }
+        }
+      }
+
+      if (json.length === 0) {
+        const emptyMsg = `선택한 시트("${sheetName}")에 데이터가 비어 있습니다. (파일 내 시트 목록: ${workbook.SheetNames.join(', ')})`;
+        setError(emptyMsg);
         setAppNotice({
           type: 'error',
-          title: type === 'phonebook' ? '전화번호부 파일 변환 오류' : '학습이력 파일 변환 오류',
-          message: errMsg,
+          title: type === 'phonebook' ? '전화번호부 데이터 없음' : '학습이력 데이터 없음',
+          message: emptyMsg,
         });
-      } finally {
-        setLoading(false);
+        return;
       }
-    };
 
-    reader.readAsArrayBuffer(file);
+      const headers = Object.keys(json[0] || {});
+      if (headers.length === 0) {
+        const headerMsg = `시트("${sheetName}")에서 열 제목(헤더)을 찾을 수 없습니다.`;
+        setError(headerMsg);
+        setAppNotice({
+          type: 'error',
+          title: '열 제목 인식 실패',
+          message: headerMsg,
+        });
+        return;
+      }
+
+      if (type === 'phonebook') {
+        setPhoneBookFile(file);
+        setPhoneBookRows(json);
+        setPhoneBookHeaders(headers);
+        autoMapHeaders(headers, 'phonebook');
+      } else {
+        setMessageFile(file);
+        setMessageRows(json);
+        setMessageHeaders(headers);
+        autoMapHeaders(headers, 'message');
+      }
+    } catch (err: any) {
+      console.error('Excel parse error:', err);
+      const rawErr = err?.message ? ` (${err.name ? `${err.name}: ` : ''}${err.message})` : '';
+      const errMsg = `파일("${file?.name || '알 수 없음'}")을 읽는 중 오류가 발생했습니다. 파일이 다른 프로그램(Excel 등)에 열려 잠겨 있거나, 암호가 걸려 있는지, 표준 Excel(.xlsx/.xls/.csv) 파일이 맞는지 확인해 주세요.${rawErr}`;
+      setError(errMsg);
+      setAppNotice({
+        type: 'error',
+        title: type === 'phonebook' ? '전화번호부 파일 읽기/변환 오류' : '학습이력 파일 읽기/변환 오류',
+        message: errMsg,
+      });
+    } finally {
+      setLoading(false);
+    }
   };
 
   // Open file picker: Phonebook remembers previous folder via id, Matholic opens Downloads folder
   const handlePickFileWithPicker = async (type: 'phonebook' | 'message') => {
     const inputRef = type === 'phonebook' ? phoneBookInputRef : messageInputRef;
     const setError = type === 'phonebook' ? setPhoneBookError : setMessageError;
+    const setPickerNotice = type === 'phonebook' ? setPhoneBookPickerNotice : setMessagePickerNotice;
+
     setError(null);
+    setPickerNotice(null);
 
     if (!pickerUnavailable && 'showOpenFilePicker' in window) {
       const pickerOpts: any = {
@@ -339,8 +367,8 @@ export default function App() {
           {
             description: 'Excel & CSV Files',
             accept: {
-              'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
-              'application/vnd.ms-excel': ['.xls'],
+              'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx', '.xlsm'],
+              'application/vnd.ms-excel': ['.xls', '.csv'],
               'text/csv': ['.csv'],
             },
           },
@@ -349,11 +377,16 @@ export default function App() {
         multiple: false,
       };
 
-      let fileHandle: any;
+      let handles: any[];
       try {
-        [fileHandle] = await (window as any).showOpenFilePicker(pickerOpts);
+        handles = await (window as any).showOpenFilePicker(pickerOpts);
       } catch (err: any) {
-        if (err?.name === 'AbortError') return; // 사용자가 창을 닫은 경우
+        if (err?.name === 'AbortError') {
+          setPickerNotice(
+            '파일 선택창이 닫혔거나, 브라우저 보안 정책(폴더/파일 접근 제한)으로 파일 전달이 중단되었습니다. 파일을 선택했는데도 업로드되지 않았다면 아래 버튼으로 기본 파일 선택 모드로 전환해 주세요.'
+          );
+          return;
+        }
 
         const errDetail = err?.name ? `${err.name}${err?.message ? `: ${err.message}` : ''}` : '알 수 없는 오류';
         console.warn('showOpenFilePicker failed, switching to native input:', err);
@@ -365,7 +398,6 @@ export default function App() {
         }
         setPickerUnavailable(true);
 
-        // Try triggering fallback input (may be blocked after async await in strict browsers)
         let fallbackTriggered = false;
         try {
           if (inputRef.current) {
@@ -382,15 +414,21 @@ export default function App() {
         setError(msg);
         setAppNotice({
           type: 'warning',
-          title: '기본 파일 선택 모드로 전환됨 (원인 확인)',
+          title: '기본 파일 선택 모드로 전환됨',
           message: msg,
         });
         return;
       }
 
+      if (!Array.isArray(handles) || handles.length === 0 || !handles[0]) {
+        const msg = '파일 선택창에서 선택한 파일 핸들을 받지 못했습니다. 기본 파일 선택 모드로 전환해 다시 시도해 주세요.';
+        setPickerNotice(msg);
+        return;
+      }
+
       try {
-        const file = await fileHandle.getFile();
-        handleFileLoad(file, type);
+        const file = await handles[0].getFile();
+        await handleFileLoad(file, type);
       } catch (fileErr: any) {
         const msg = `선택한 파일을 읽어오는 데 실패했습니다. (${fileErr?.name || 'Error'}: ${fileErr?.message || '권한 또는 파일 접근 오류'})`;
         setError(msg);
@@ -494,6 +532,8 @@ export default function App() {
     setConvertedRecords([]);
     setPhoneBookError(null);
     setMessageError(null);
+    setPhoneBookPickerNotice(null);
+    setMessagePickerNotice(null);
     setAppNotice(null);
   };
 
@@ -511,21 +551,31 @@ export default function App() {
       return;
     }
 
-    // 1. Convert row formats to match helper requirements
-    const formattedPhoneBook = phoneBookRows.map((r) => ({
-      idOrName: String(r[phoneBookIdCol] || ''),
-      phone: String(r[phoneBookPhoneCol] || ''),
-    }));
+    try {
+      // 1. Convert row formats to match helper requirements
+      const formattedPhoneBook = phoneBookRows.map((r) => ({
+        idOrName: String(r[phoneBookIdCol] || ''),
+        phone: String(r[phoneBookPhoneCol] || ''),
+      }));
 
-    const formattedMessageList = messageRows.map((r) => ({
-      idOrName: String(r[messageIdCol] || ''),
-      content: String(r[messageContentCol] || ''),
-      rawRow: r,
-    }));
+      const formattedMessageList = messageRows.map((r) => ({
+        idOrName: String(r[messageIdCol] || ''),
+        content: String(r[messageContentCol] || ''),
+        rawRow: r,
+      }));
 
-    // 2. Perform conversions and filtering
-    const results = convertAndFilterRecords(formattedPhoneBook, formattedMessageList, settings);
-    setConvertedRecords(results);
+      // 2. Perform conversions and filtering
+      const results = convertAndFilterRecords(formattedPhoneBook, formattedMessageList, settings);
+      setConvertedRecords(results);
+    } catch (err: any) {
+      console.error('Conversion error:', err);
+      setConvertedRecords([]);
+      setAppNotice({
+        type: 'error',
+        title: '데이터 변환 중 오류 발생',
+        message: `업로드된 엑셀 데이터를 변환하는 중 오류가 발생했습니다. (${err?.message || '열 매핑 또는 데이터 형식을 확인해 주세요.'})`,
+      });
+    }
   }, [
     phoneBookRows, 
     messageRows, 
@@ -848,6 +898,21 @@ export default function App() {
                     <span className="leading-relaxed break-words">{phoneBookError}</span>
                   </div>
                 )}
+                {phoneBookPickerNotice && !phoneBookError && (
+                  <div className="mt-3 w-full max-w-sm bg-amber-950/60 border border-amber-500/40 rounded-xl px-3.5 py-2.5 text-left text-[11px] text-amber-100 space-y-2">
+                    <div className="flex items-start gap-2">
+                      <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                      <span className="leading-relaxed break-words">{phoneBookPickerNotice}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={switchToNativePicker}
+                      className="w-full py-1.5 px-3 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/40 text-amber-200 font-semibold text-[11px] transition-colors cursor-pointer"
+                    >
+                      기본 파일 선택 모드로 전환하기
+                    </button>
+                  </div>
+                )}
                 {pickerUnavailable ? (
                   <label
                     htmlFor="phonebook-upload-input"
@@ -887,11 +952,20 @@ export default function App() {
                     )}
                   </button>
                 )}
-                <div className="text-[10px] text-slate-500 mt-2.5 flex items-center gap-1">
+                <div className="text-[10px] text-slate-500 mt-2.5 flex items-center gap-1 flex-wrap justify-center">
                   <span className="text-sky-400 font-semibold">
                     {pickerUnavailable ? '📁 기본 파일 선택 모드' : '📁 이전 폴더 위치 기억'}
                   </span>
                   <span>• Excel / CSV 지원</span>
+                  {pickerUnavailable && (
+                    <button
+                      type="button"
+                      onClick={tryEnableFolderPicker}
+                      className="text-slate-400 hover:text-sky-400 underline underline-offset-2 ml-1 cursor-pointer"
+                    >
+                      (폴더 기억 복원)
+                    </button>
+                  )}
                 </div>
               </div>
             )}
@@ -968,6 +1042,21 @@ export default function App() {
                     <span className="leading-relaxed break-words">{messageError}</span>
                   </div>
                 )}
+                {messagePickerNotice && !messageError && (
+                  <div className="mt-3 w-full max-w-sm bg-amber-950/60 border border-amber-500/40 rounded-xl px-3.5 py-2.5 text-left text-[11px] text-amber-100 space-y-2">
+                    <div className="flex items-start gap-2">
+                      <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                      <span className="leading-relaxed break-words">{messagePickerNotice}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={switchToNativePicker}
+                      className="w-full py-1.5 px-3 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/40 text-amber-200 font-semibold text-[11px] transition-colors cursor-pointer"
+                    >
+                      기본 파일 선택 모드로 전환하기
+                    </button>
+                  </div>
+                )}
                 {pickerUnavailable ? (
                   <label
                     htmlFor="message-upload-input"
@@ -1007,11 +1096,20 @@ export default function App() {
                     )}
                   </button>
                 )}
-                <div className="text-[10px] text-slate-500 mt-2.5 flex items-center gap-1">
+                <div className="text-[10px] text-slate-500 mt-2.5 flex items-center gap-1 flex-wrap justify-center">
                   <span className="text-purple-400 font-semibold">
                     {pickerUnavailable ? '📥 기본 파일 선택 모드' : '📥 다운로드(Downloads) 폴더 열기'}
                   </span>
                   <span>• 3번째 시트 자동 인식</span>
+                  {pickerUnavailable && (
+                    <button
+                      type="button"
+                      onClick={tryEnableFolderPicker}
+                      className="text-slate-400 hover:text-purple-400 underline underline-offset-2 ml-1 cursor-pointer"
+                    >
+                      (폴더 기억 복원)
+                    </button>
+                  )}
                 </div>
               </div>
             )}
